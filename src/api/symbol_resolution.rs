@@ -72,7 +72,7 @@ fn resolve_public_symbols(
                         .iter()
                         .find(|m| m.name == normalised_path)
                         .ok_or_else(|| {
-                            ExtractionError::Parse(format!(
+                            ExtractionError::Malformed(format!(
                                 "Could not find module '{}'",
                                 normalised_path
                             ))
@@ -147,7 +147,7 @@ fn normalise_reference(reference: &str, current_module: &str) -> Result<String, 
         Ok(stripped.to_string())
     } else if let Some(stripped) = reference.strip_prefix("super::") {
         if current_module.is_empty() {
-            return Err(ExtractionError::Parse(
+            return Err(ExtractionError::Malformed(
                 "Cannot use super from the root module".to_string(),
             ));
         }
@@ -473,7 +473,7 @@ mod tests {
 
             assert!(matches!(
                 result,
-                Err(ExtractionError::Parse(msg)) if msg == "Cannot use super from the root module"
+                Err(ExtractionError::Malformed(msg)) if msg == "Cannot use super from the root module"
             ));
         }
 

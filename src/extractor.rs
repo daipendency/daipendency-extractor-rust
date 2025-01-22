@@ -1,5 +1,7 @@
 use super::{api, metadata};
-use daipendency_extractor::{ExtractionError, Extractor, Namespace, PackageMetadata};
+use daipendency_extractor::{
+    ExtractionError, Extractor, LibraryMetadata, LibraryMetadataError, Namespace,
+};
 use std::path::Path;
 use tree_sitter::{Language, Parser};
 
@@ -16,13 +18,13 @@ impl Extractor for RustExtractor {
         tree_sitter_rust::LANGUAGE.into()
     }
 
-    fn get_package_metadata(&self, path: &Path) -> Result<PackageMetadata, ExtractionError> {
+    fn get_library_metadata(&self, path: &Path) -> Result<LibraryMetadata, LibraryMetadataError> {
         metadata::extract_metadata(path)
     }
 
     fn extract_public_api(
         &self,
-        metadata: &PackageMetadata,
+        metadata: &LibraryMetadata,
         parser: &mut Parser,
     ) -> Result<Vec<Namespace>, ExtractionError> {
         api::build_public_api(&metadata.entry_point, &metadata.name, parser)
@@ -48,7 +50,7 @@ version = "0.1.0"
         .unwrap();
 
         let analyser = RustExtractor::new();
-        let metadata = analyser.get_package_metadata(temp_dir.path()).unwrap();
+        let metadata = analyser.get_library_metadata(temp_dir.path()).unwrap();
 
         assert_eq!(metadata.name, "test_crate");
     }
@@ -70,7 +72,7 @@ pub fn test_function() -> i32 {
         .unwrap();
 
         let analyser = RustExtractor::new();
-        let metadata = PackageMetadata {
+        let metadata = LibraryMetadata {
             name: "test_crate".to_string(),
             version: Some("0.1.0".to_string()),
             documentation: String::new(),

@@ -58,7 +58,7 @@ fn extract_preceding_block_comment(
     if node.kind() == "block_comment" && is_doc_comment(node, DocCommentMarker::Outer) {
         let text = node
             .utf8_text(source_code.as_bytes())
-            .map_err(|e| ExtractionError::Parse(e.to_string()))?;
+            .map_err(|e| ExtractionError::Malformed(e.to_string()))?;
         return Ok(Some(text.to_string() + "\n"));
     }
     Ok(None)
@@ -74,7 +74,7 @@ fn extract_preceding_line_doc_comments(
         if is_doc_comment(&node, DocCommentMarker::Outer) {
             let comment_text = node
                 .utf8_text(source_code.as_bytes())
-                .map_err(|e| ExtractionError::Parse(e.to_string()))?;
+                .map_err(|e| ExtractionError::Malformed(e.to_string()))?;
             items.push(comment_text.to_string());
         } else {
             break;
@@ -105,7 +105,7 @@ pub fn extract_inner_doc_comments(
             if is_doc_comment(&child, DocCommentMarker::Inner) {
                 let comment_text = child
                     .utf8_text(source_code.as_bytes())
-                    .map_err(|e| ExtractionError::Parse(e.to_string()))?;
+                    .map_err(|e| ExtractionError::Malformed(e.to_string()))?;
                 doc_comment.push_str(comment_text);
             } else {
                 break;

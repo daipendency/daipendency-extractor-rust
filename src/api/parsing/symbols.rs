@@ -23,7 +23,7 @@ pub fn get_symbol_source_code(node: Node, source_code: &str) -> Result<String, E
                 .children(&mut cursor)
                 .find(|n| n.kind() == "block")
                 .ok_or_else(|| {
-                    ExtractionError::Parse("Failed to find function block".to_string())
+                    ExtractionError::Malformed("Failed to find function block".to_string())
                 })?;
             format!(
                 "{};",
@@ -32,7 +32,7 @@ pub fn get_symbol_source_code(node: Node, source_code: &str) -> Result<String, E
         }
         "trait_item" => {
             let declaration_list = get_declaration_list(node).ok_or_else(|| {
-                ExtractionError::Parse("Failed to find trait declaration list".to_string())
+                ExtractionError::Malformed("Failed to find trait declaration list".to_string())
             })?;
 
             let mut trait_source = String::new();
@@ -57,7 +57,7 @@ pub fn get_symbol_source_code(node: Node, source_code: &str) -> Result<String, E
         _ => node
             .utf8_text(source_code.as_bytes())
             .map(|s| s.to_string())
-            .map_err(|e| ExtractionError::Parse(e.to_string()))?,
+            .map_err(|e| ExtractionError::Malformed(e.to_string()))?,
     };
 
     source_code_with_docs.push_str(&symbol_source);

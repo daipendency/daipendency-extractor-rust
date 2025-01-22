@@ -41,13 +41,7 @@ fn collect_symbols_recursively(
         return Ok(Vec::new());
     }
 
-    let content = std::fs::read_to_string(file_path).map_err(|e| {
-        ExtractionError::Parse(format!(
-            "Failed to read file '{}': {}",
-            file_path.display(),
-            e
-        ))
-    })?;
+    let content = std::fs::read_to_string(file_path).map_err(ExtractionError::Io)?;
 
     visited_files.insert(file_path.to_path_buf(), true);
     let rust_file = parsing::parse_rust_file(&content, parser)?;
@@ -144,7 +138,7 @@ fn collect_module_symbols(
 
 fn resolve_module_path(current_file: &Path, module_name: &str) -> Result<PathBuf, ExtractionError> {
     let parent = current_file.parent().ok_or_else(|| {
-        ExtractionError::Parse(format!(
+        ExtractionError::Malformed(format!(
             "Failed to get parent directory of {}",
             current_file.display()
         ))
@@ -160,7 +154,7 @@ fn resolve_module_path(current_file: &Path, module_name: &str) -> Result<PathBuf
         return Ok(rs_path);
     }
 
-    Err(ExtractionError::Parse(format!(
+    Err(ExtractionError::Malformed(format!(
         "Could not find module {} from {}",
         module_name,
         current_file.display()
@@ -187,7 +181,8 @@ mod tests {
         let mut parser = setup_parser();
 
         let result = collect_symbols(&path, &mut parser);
-        assert!(matches!(result, Err(ExtractionError::Parse(_))));
+
+        assert!(matches!(result, Err(ExtractionError::Io(_))));
     }
 
     #[test]

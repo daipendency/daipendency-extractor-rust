@@ -26,6 +26,8 @@ pub fn build_public_api(
 
 #[cfg(test)]
 mod tests {
+    use assertables::assert_matches;
+
     use super::*;
     use crate::test_helpers::setup_parser;
     use crate::test_helpers::{create_file, create_temp_dir};
@@ -39,7 +41,7 @@ mod tests {
 
         let result = build_public_api(&path, STUB_CRATE_NAME, &mut parser);
 
-        assert!(matches!(result, Err(ExtractionError::Parse(_))));
+        assert_matches!(result, Err(ExtractionError::Io(_)));
     }
 
     #[test]

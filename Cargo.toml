@@ -1,6 +1,6 @@
 [package]
 name = "daipendency-extractor-rust"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Daipendency extractor for Rust library crates"
 repository = "https://github.com/daipendency/daipendency-extractor-rust"
@@ -13,7 +13,7 @@ authors = ["Gus Narea"]
 cc = "1.2.6"
 
 [dependencies]
-daipendency-extractor = "1.0.2"
+daipendency-extractor = "1.0.5"
 serde = { version = "1.0.217", features = ["derive"] }
 toml = "0.8.19"
 tree-sitter = "0.24.6"

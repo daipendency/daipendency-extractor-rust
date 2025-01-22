@@ -28,7 +28,7 @@ pub fn extract_attributes(node: &Node, source_code: &str) -> Result<Vec<String>,
 
         let text = sibling
             .utf8_text(source_code.as_bytes())
-            .map_err(|e| ExtractionError::Parse(e.to_string()))?;
+            .map_err(|e| ExtractionError::Malformed(e.to_string()))?;
         items.push(text.to_string());
 
         current = sibling.prev_sibling();
@@ -50,7 +50,7 @@ pub fn extract_name(node: &Node, source_code: &str) -> Result<String, Extraction
                 .map(|s| s.to_string())
                 .ok()
         })
-        .ok_or_else(|| ExtractionError::Parse("Failed to extract name".to_string()))
+        .ok_or_else(|| ExtractionError::Malformed("Failed to extract name".to_string()))
 }
 
 #[cfg(test)]

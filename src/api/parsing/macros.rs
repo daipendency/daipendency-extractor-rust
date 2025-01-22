@@ -16,9 +16,9 @@ pub fn get_macro_source_code(
     let mut prev_sibling = node.prev_sibling();
     while let Some(sibling) = prev_sibling {
         if sibling.kind() == "attribute_item" {
-            let attr_text = sibling
-                .utf8_text(source_code.as_bytes())
-                .map_err(|_| ExtractionError::Parse("Failed to read attribute text".to_string()))?;
+            let attr_text = sibling.utf8_text(source_code.as_bytes()).map_err(|_| {
+                ExtractionError::Malformed("Failed to read attribute text".to_string())
+            })?;
             if attr_text == "#[macro_export]" {
                 is_exported = true;
                 result.push_str(attr_text);
@@ -36,7 +36,7 @@ pub fn get_macro_source_code(
     let brace = node
         .children(&mut cursor)
         .find(|n| n.kind() == "{")
-        .ok_or_else(|| ExtractionError::Parse("Failed to find macro body".to_string()))?;
+        .ok_or_else(|| ExtractionError::Malformed("Failed to find macro body".to_string()))?;
 
     result.push_str(source_code[node.start_byte()..brace.start_byte()].trim_end());
     result.push(';');

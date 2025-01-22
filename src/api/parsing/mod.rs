@@ -21,7 +21,7 @@ pub use files::{RustFile, RustSymbol};
 pub fn parse_rust_file(content: &str, parser: &mut Parser) -> Result<RustFile, ExtractionError> {
     let tree = parser
         .parse(content, None)
-        .ok_or_else(|| ExtractionError::Parse("Failed to parse source file".to_string()))?;
+        .ok_or_else(|| ExtractionError::Malformed("Failed to parse source file".to_string()))?;
 
     let doc_comment = extract_inner_doc_comments(&tree.root_node(), content)?;
     let symbols = extract_symbols_from_module(tree.root_node(), content)?;

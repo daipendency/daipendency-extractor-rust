@@ -40,18 +40,19 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "daipendency-extractor"
-version = "1.0.2"
+version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0c58f2a001b5c7e365f60925b389022c4464327015461a2eaa5954208a916ed"
+checksum = "468a7940c05a7fb678bb242c040fa44ec0a3a60cc6196f4c4998bc096900e1bd"
 dependencies = [
  "cc",
+ "thiserror",
  "tree-sitter",
  "walkdir",
 ]
 
 [[package]]
 name = "daipendency-extractor-rust"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "assertables",
  "cc",
@@ -270,6 +271,26 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys",
+]
+
+[[package]]
+name = "thiserror"
+version = "2.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d452f284b73e6d76dd36758a0c8684b1d5be31f92b89d07fd5822175732206fc"
+dependencies = [
+ "thiserror-impl",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "2.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26afc1baea8a989337eeb52b6e72a039780ce45c3edfcc9c5b9d112feeb173c2"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

@@ -1,5 +1,4 @@
-use daipendency_extractor::ExtractionError;
-use daipendency_extractor::PackageMetadata;
+use daipendency_extractor::{LibraryMetadata, LibraryMetadataError};
 use serde::{de::Error, Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -44,13 +43,13 @@ struct CargoConfig {
     lib: Option<LibConfig>,
 }
 
-pub fn extract_metadata(path: &Path) -> Result<PackageMetadata, ExtractionError> {
+pub fn extract_metadata(path: &Path) -> Result<LibraryMetadata, LibraryMetadataError> {
     let cargo_toml_path = path.join("Cargo.toml");
     let cargo_toml_content = fs::read_to_string(&cargo_toml_path)
-        .map_err(|e| ExtractionError::Parse(format!("Failed to read Cargo.toml: {}", e)))?;
+        .map_err(|e| LibraryMetadataError(format!("Failed to read Cargo.toml: {}", e)))?;
 
     let cargo_config: CargoConfig = toml::from_str(&cargo_toml_content)
-        .map_err(|e| ExtractionError::Parse(format!("Failed to parse Cargo.toml: {}", e)))?;
+        .map_err(|e| LibraryMetadataError(format!("Failed to parse Cargo.toml: {}", e)))?;
 
     let readme_path = path.join(README_PATH);
     let documentation = fs::read_to_string(&readme_path).unwrap_or_default();
@@ -61,7 +60,7 @@ pub fn extract_metadata(path: &Path) -> Result<PackageMetadata, ExtractionError>
         .map(|path_str| path.join(Path::new(&path_str)))
         .unwrap_or_else(|| path.join(DEFAULT_LIB_PATH));
 
-    Ok(PackageMetadata {
+    Ok(LibraryMetadata {
         name: cargo_config.package.name,
         version: cargo_config.package.version,
         documentation,
@@ -108,7 +107,7 @@ mod tests {
 
         let result = extract_metadata(temp_dir.path());
 
-        assert!(matches!(result, Err(ExtractionError::Parse(_))));
+        assert!(matches!(result, Err(LibraryMetadataError(_))));
     }
 
     #[test]
@@ -140,7 +139,7 @@ mod tests {
 
         let result = extract_metadata(temp_dir.path());
 
-        assert!(matches!(result, Err(ExtractionError::Parse(_))));
+        assert!(matches!(result, Err(LibraryMetadataError(_))));
     }
 
     #[test]
@@ -154,7 +153,7 @@ mod tests {
 
         let result = extract_metadata(temp_dir.path());
 
-        assert!(matches!(result, Err(ExtractionError::Parse(_))));
+        assert!(matches!(result, Err(LibraryMetadataError(_))));
     }
 
     #[test]
