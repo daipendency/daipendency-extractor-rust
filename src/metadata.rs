@@ -1,4 +1,4 @@
-use daipendency_extractor::LaibraryError;
+use daipendency_extractor::ExtractionError;
 use daipendency_extractor::PackageMetadata;
 use serde::{de::Error, Deserialize, Serialize};
 use std::fs;
@@ -44,13 +44,13 @@ struct CargoConfig {
     lib: Option<LibConfig>,
 }
 
-pub fn extract_metadata(path: &Path) -> Result<PackageMetadata, LaibraryError> {
+pub fn extract_metadata(path: &Path) -> Result<PackageMetadata, ExtractionError> {
     let cargo_toml_path = path.join("Cargo.toml");
     let cargo_toml_content = fs::read_to_string(&cargo_toml_path)
-        .map_err(|e| LaibraryError::Parse(format!("Failed to read Cargo.toml: {}", e)))?;
+        .map_err(|e| ExtractionError::Parse(format!("Failed to read Cargo.toml: {}", e)))?;
 
     let cargo_config: CargoConfig = toml::from_str(&cargo_toml_content)
-        .map_err(|e| LaibraryError::Parse(format!("Failed to parse Cargo.toml: {}", e)))?;
+        .map_err(|e| ExtractionError::Parse(format!("Failed to parse Cargo.toml: {}", e)))?;
 
     let readme_path = path.join(README_PATH);
     let documentation = fs::read_to_string(&readme_path).unwrap_or_default();
@@ -108,7 +108,7 @@ mod tests {
 
         let result = extract_metadata(temp_dir.path());
 
-        assert!(matches!(result, Err(LaibraryError::Parse(_))));
+        assert!(matches!(result, Err(ExtractionError::Parse(_))));
     }
 
     #[test]
@@ -140,7 +140,7 @@ mod tests {
 
         let result = extract_metadata(temp_dir.path());
 
-        assert!(matches!(result, Err(LaibraryError::Parse(_))));
+        assert!(matches!(result, Err(ExtractionError::Parse(_))));
     }
 
     #[test]
@@ -154,7 +154,7 @@ mod tests {
 
         let result = extract_metadata(temp_dir.path());
 
-        assert!(matches!(result, Err(LaibraryError::Parse(_))));
+        assert!(matches!(result, Err(ExtractionError::Parse(_))));
     }
 
     #[test]

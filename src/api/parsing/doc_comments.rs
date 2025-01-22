@@ -1,4 +1,4 @@
-use daipendency_extractor::LaibraryError;
+use daipendency_extractor::ExtractionError;
 use tree_sitter::Node;
 
 #[derive(Debug, Clone, Copy)]
@@ -19,7 +19,7 @@ impl DocCommentMarker {
 pub fn extract_outer_doc_comments(
     node: &Node,
     source_code: &str,
-) -> Result<Option<String>, LaibraryError> {
+) -> Result<Option<String>, ExtractionError> {
     let Some(previous_sibling) = node.prev_sibling() else {
         return Ok(None);
     };
@@ -54,11 +54,11 @@ fn is_doc_comment(node: &Node, marker: DocCommentMarker) -> bool {
 fn extract_preceding_block_comment(
     node: &Node,
     source_code: &str,
-) -> Result<Option<String>, LaibraryError> {
+) -> Result<Option<String>, ExtractionError> {
     if node.kind() == "block_comment" && is_doc_comment(node, DocCommentMarker::Outer) {
         let text = node
             .utf8_text(source_code.as_bytes())
-            .map_err(|e| LaibraryError::Parse(e.to_string()))?;
+            .map_err(|e| ExtractionError::Parse(e.to_string()))?;
         return Ok(Some(text.to_string() + "\n"));
     }
     Ok(None)
@@ -67,14 +67,14 @@ fn extract_preceding_block_comment(
 fn extract_preceding_line_doc_comments(
     mut node: Node,
     source_code: &str,
-) -> Result<Option<String>, LaibraryError> {
+) -> Result<Option<String>, ExtractionError> {
     let mut items = Vec::new();
 
     while node.kind() == "line_comment" {
         if is_doc_comment(&node, DocCommentMarker::Outer) {
             let comment_text = node
                 .utf8_text(source_code.as_bytes())
-                .map_err(|e| LaibraryError::Parse(e.to_string()))?;
+                .map_err(|e| ExtractionError::Parse(e.to_string()))?;
             items.push(comment_text.to_string());
         } else {
             break;
@@ -97,7 +97,7 @@ fn extract_preceding_line_doc_comments(
 pub fn extract_inner_doc_comments(
     node: &Node,
     source_code: &str,
-) -> Result<Option<String>, LaibraryError> {
+) -> Result<Option<String>, ExtractionError> {
     let mut doc_comment = String::new();
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -105,7 +105,7 @@ pub fn extract_inner_doc_comments(
             if is_doc_comment(&child, DocCommentMarker::Inner) {
                 let comment_text = child
                     .utf8_text(source_code.as_bytes())
-                    .map_err(|e| LaibraryError::Parse(e.to_string()))?;
+                    .map_err(|e| ExtractionError::Parse(e.to_string()))?;
                 doc_comment.push_str(comment_text);
             } else {
                 break;

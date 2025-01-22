@@ -1,4 +1,4 @@
-use daipendency_extractor::LaibraryError;
+use daipendency_extractor::ExtractionError;
 use daipendency_extractor::Symbol;
 use tree_sitter::{Node, Parser};
 
@@ -18,10 +18,10 @@ use symbols::get_symbol_source_code;
 
 pub use files::{RustFile, RustSymbol};
 
-pub fn parse_rust_file(content: &str, parser: &mut Parser) -> Result<RustFile, LaibraryError> {
+pub fn parse_rust_file(content: &str, parser: &mut Parser) -> Result<RustFile, ExtractionError> {
     let tree = parser
         .parse(content, None)
-        .ok_or_else(|| LaibraryError::Parse("Failed to parse source file".to_string()))?;
+        .ok_or_else(|| ExtractionError::Parse("Failed to parse source file".to_string()))?;
 
     let doc_comment = extract_inner_doc_comments(&tree.root_node(), content)?;
     let symbols = extract_symbols_from_module(tree.root_node(), content)?;
@@ -34,7 +34,7 @@ pub fn parse_rust_file(content: &str, parser: &mut Parser) -> Result<RustFile, L
 fn extract_symbols_from_module(
     module_node: Node,
     source_code: &str,
-) -> Result<Vec<RustSymbol>, LaibraryError> {
+) -> Result<Vec<RustSymbol>, ExtractionError> {
     let mut symbols = Vec::new();
     let mut cursor = module_node.walk();
 

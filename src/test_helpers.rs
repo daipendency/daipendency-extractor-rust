@@ -1,7 +1,7 @@
 #![cfg(test)]
 
-use crate::analyser::RustAnalyser;
-use daipendency_extractor::{Analyser, Namespace, Symbol};
+use crate::extractor::RustExtractor;
+use daipendency_extractor::{Extractor, Namespace, Symbol};
 use std::io::Write;
 use std::path::Path;
 use tempfile::TempDir;
@@ -9,7 +9,7 @@ use tree_sitter::Parser;
 
 pub fn setup_parser() -> Parser {
     let mut parser = Parser::new();
-    let analyser = RustAnalyser::new();
+    let analyser = RustExtractor::new();
     parser
         .set_language(&analyser.get_parser_language())
         .unwrap();

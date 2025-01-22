@@ -4,7 +4,7 @@ mod symbol_collection;
 mod symbol_resolution;
 mod test_helpers;
 
-use daipendency_extractor::LaibraryError;
+use daipendency_extractor::ExtractionError;
 use daipendency_extractor::Namespace;
 use std::path::Path;
 use tree_sitter::Parser;
@@ -17,7 +17,7 @@ pub fn build_public_api(
     entry_point: &Path,
     crate_name: &str,
     parser: &mut Parser,
-) -> Result<Vec<Namespace>, LaibraryError> {
+) -> Result<Vec<Namespace>, ExtractionError> {
     let raw_namespaces = collect_symbols(entry_point, parser)?;
     let resolution = resolve_symbols(&raw_namespaces)?;
     let namespaces = construct_namespaces(resolution, crate_name);
@@ -39,7 +39,7 @@ mod tests {
 
         let result = build_public_api(&path, STUB_CRATE_NAME, &mut parser);
 
-        assert!(matches!(result, Err(LaibraryError::Parse(_))));
+        assert!(matches!(result, Err(ExtractionError::Parse(_))));
     }
 
     #[test]

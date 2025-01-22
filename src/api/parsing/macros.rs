@@ -1,11 +1,11 @@
 use super::doc_comments::extract_outer_doc_comments;
-use daipendency_extractor::LaibraryError;
+use daipendency_extractor::ExtractionError;
 use tree_sitter::Node;
 
 pub fn get_macro_source_code(
     node: Node,
     source_code: &str,
-) -> Result<Option<String>, LaibraryError> {
+) -> Result<Option<String>, ExtractionError> {
     let mut result = String::new();
 
     if let Some(doc_comment) = extract_outer_doc_comments(&node, source_code)? {
@@ -18,7 +18,7 @@ pub fn get_macro_source_code(
         if sibling.kind() == "attribute_item" {
             let attr_text = sibling
                 .utf8_text(source_code.as_bytes())
-                .map_err(|_| LaibraryError::Parse("Failed to read attribute text".to_string()))?;
+                .map_err(|_| ExtractionError::Parse("Failed to read attribute text".to_string()))?;
             if attr_text == "#[macro_export]" {
                 is_exported = true;
                 result.push_str(attr_text);
@@ -36,7 +36,7 @@ pub fn get_macro_source_code(
     let brace = node
         .children(&mut cursor)
         .find(|n| n.kind() == "{")
-        .ok_or_else(|| LaibraryError::Parse("Failed to find macro body".to_string()))?;
+        .ok_or_else(|| ExtractionError::Parse("Failed to find macro body".to_string()))?;
 
     result.push_str(source_code[node.start_byte()..brace.start_byte()].trim_end());
     result.push(';');

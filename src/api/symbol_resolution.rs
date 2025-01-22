@@ -1,4 +1,4 @@
-use daipendency_extractor::LaibraryError;
+use daipendency_extractor::ExtractionError;
 use daipendency_extractor::Symbol;
 use std::collections::{HashMap, HashSet};
 
@@ -17,7 +17,7 @@ pub struct SymbolResolution {
 }
 
 /// Resolve symbol references by matching them with their corresponding definitions.
-pub fn resolve_symbols(all_modules: &[Module]) -> Result<SymbolResolution, LaibraryError> {
+pub fn resolve_symbols(all_modules: &[Module]) -> Result<SymbolResolution, ExtractionError> {
     let public_modules: Vec<Module> = all_modules
         .iter()
         .filter(|m| m.name.is_empty() || m.is_public)
@@ -40,7 +40,7 @@ pub fn resolve_symbols(all_modules: &[Module]) -> Result<SymbolResolution, Laibr
 fn resolve_public_symbols(
     all_modules: &[Module],
     public_modules: &[Module],
-) -> Result<Vec<ResolvedSymbol>, LaibraryError> {
+) -> Result<Vec<ResolvedSymbol>, ExtractionError> {
     let mut resolved_symbols: HashMap<String, ResolvedSymbol> = HashMap::new();
     let mut references_by_symbol_path: HashMap<String, Vec<String>> = HashMap::new();
 
@@ -72,7 +72,7 @@ fn resolve_public_symbols(
                         .iter()
                         .find(|m| m.name == normalised_path)
                         .ok_or_else(|| {
-                            LaibraryError::Parse(format!(
+                            ExtractionError::Parse(format!(
                                 "Could not find module '{}'",
                                 normalised_path
                             ))
@@ -142,12 +142,12 @@ fn get_symbol_path(symbol_name: &str, module: &Module) -> String {
     }
 }
 
-fn normalise_reference(reference: &str, current_module: &str) -> Result<String, LaibraryError> {
+fn normalise_reference(reference: &str, current_module: &str) -> Result<String, ExtractionError> {
     if let Some(stripped) = reference.strip_prefix("crate::") {
         Ok(stripped.to_string())
     } else if let Some(stripped) = reference.strip_prefix("super::") {
         if current_module.is_empty() {
-            return Err(LaibraryError::Parse(
+            return Err(ExtractionError::Parse(
                 "Cannot use super from the root module".to_string(),
             ));
         }
@@ -473,7 +473,7 @@ mod tests {
 
             assert!(matches!(
                 result,
-                Err(LaibraryError::Parse(msg)) if msg == "Cannot use super from the root module"
+                Err(ExtractionError::Parse(msg)) if msg == "Cannot use super from the root module"
             ));
         }
 

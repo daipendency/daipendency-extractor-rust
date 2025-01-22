@@ -1,4 +1,4 @@
-use daipendency_extractor::LaibraryError;
+use daipendency_extractor::ExtractionError;
 use daipendency_extractor::Symbol;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -25,7 +25,7 @@ pub enum Reference {
 pub fn collect_symbols(
     entry_point: &Path,
     parser: &mut Parser,
-) -> Result<Vec<Module>, LaibraryError> {
+) -> Result<Vec<Module>, ExtractionError> {
     let mut visited_files = HashMap::new();
     collect_symbols_recursively(entry_point, "", true, parser, &mut visited_files)
 }
@@ -36,13 +36,13 @@ fn collect_symbols_recursively(
     is_public: bool,
     parser: &mut Parser,
     visited_files: &mut HashMap<PathBuf, bool>,
-) -> Result<Vec<Module>, LaibraryError> {
+) -> Result<Vec<Module>, ExtractionError> {
     if visited_files.contains_key(&file_path.to_path_buf()) {
         return Ok(Vec::new());
     }
 
     let content = std::fs::read_to_string(file_path).map_err(|e| {
-        LaibraryError::Parse(format!(
+        ExtractionError::Parse(format!(
             "Failed to read file '{}': {}",
             file_path.display(),
             e
@@ -71,7 +71,7 @@ fn collect_module_symbols(
     parser: &mut Parser,
     visited_files: &mut HashMap<PathBuf, bool>,
     doc_comment: Option<String>,
-) -> Result<Vec<Module>, LaibraryError> {
+) -> Result<Vec<Module>, ExtractionError> {
     let mut modules = Vec::new();
     let mut current_namespace = Module {
         name: namespace_prefix.to_string(),
@@ -142,9 +142,9 @@ fn collect_module_symbols(
     Ok(modules)
 }
 
-fn resolve_module_path(current_file: &Path, module_name: &str) -> Result<PathBuf, LaibraryError> {
+fn resolve_module_path(current_file: &Path, module_name: &str) -> Result<PathBuf, ExtractionError> {
     let parent = current_file.parent().ok_or_else(|| {
-        LaibraryError::Parse(format!(
+        ExtractionError::Parse(format!(
             "Failed to get parent directory of {}",
             current_file.display()
         ))
@@ -160,7 +160,7 @@ fn resolve_module_path(current_file: &Path, module_name: &str) -> Result<PathBuf
         return Ok(rs_path);
     }
 
-    Err(LaibraryError::Parse(format!(
+    Err(ExtractionError::Parse(format!(
         "Could not find module {} from {}",
         module_name,
         current_file.display()
@@ -187,7 +187,7 @@ mod tests {
         let mut parser = setup_parser();
 
         let result = collect_symbols(&path, &mut parser);
-        assert!(matches!(result, Err(LaibraryError::Parse(_))));
+        assert!(matches!(result, Err(ExtractionError::Parse(_))));
     }
 
     #[test]

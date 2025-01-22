@@ -1,12 +1,12 @@
 use super::files::RustSymbol;
 use super::helpers::is_public;
-use daipendency_extractor::LaibraryError;
+use daipendency_extractor::ExtractionError;
 use tree_sitter::Node;
 
 pub fn extract_symbol_reexports(
     use_declaration_node: &Node,
     source_code: &str,
-) -> Result<Vec<RustSymbol>, LaibraryError> {
+) -> Result<Vec<RustSymbol>, ExtractionError> {
     if !is_public(use_declaration_node) {
         return Ok(Vec::new());
     }
@@ -21,7 +21,7 @@ pub fn extract_symbol_reexports(
     } else if let Some(wildcard) = children.iter().find(|c| c.kind() == "use_wildcard") {
         extract_wildcard_reexport(wildcard, source_code)
     } else {
-        Err(LaibraryError::Parse(
+        Err(ExtractionError::Parse(
             "Failed to find symbol reexport".to_string(),
         ))
     }
@@ -30,31 +30,34 @@ pub fn extract_symbol_reexports(
 fn extract_wildcard_reexport(
     wildcard: &Node,
     source_code: &str,
-) -> Result<Vec<RustSymbol>, LaibraryError> {
+) -> Result<Vec<RustSymbol>, ExtractionError> {
     let mut cursor = wildcard.walk();
     let children: Vec<_> = wildcard.children(&mut cursor).collect();
     let module_path = children
         .iter()
         .find(|c| c.kind() == "identifier")
         .ok_or_else(|| {
-            LaibraryError::Parse("Failed to find module path in wildcard import".to_string())
+            ExtractionError::Parse("Failed to find module path in wildcard import".to_string())
         })?
         .utf8_text(source_code.as_bytes())
-        .map_err(|e| LaibraryError::Parse(e.to_string()))?;
+        .map_err(|e| ExtractionError::Parse(e.to_string()))?;
     Ok(vec![RustSymbol::SymbolReexport {
         source_path: module_path.to_string(),
         is_wildcard: true,
     }])
 }
 
-fn extract_single_reexport(scoped: &Node, source_code: &str) -> Result<RustSymbol, LaibraryError> {
+fn extract_single_reexport(
+    scoped: &Node,
+    source_code: &str,
+) -> Result<RustSymbol, ExtractionError> {
     let mut cursor = scoped.walk();
     let source_path = scoped
         .children(&mut cursor)
         .map(|child| {
             child
                 .utf8_text(source_code.as_bytes())
-                .map_err(|e| LaibraryError::Parse(e.to_string()))
+                .map_err(|e| ExtractionError::Parse(e.to_string()))
         })
         .collect::<Result<Vec<_>, _>>()?
         .join("");
@@ -67,21 +70,21 @@ fn extract_single_reexport(scoped: &Node, source_code: &str) -> Result<RustSymbo
 fn extract_multi_reexports(
     scoped_list: &Node,
     source_code: &str,
-) -> Result<Vec<RustSymbol>, LaibraryError> {
+) -> Result<Vec<RustSymbol>, ExtractionError> {
     let mut scoped_cursor = scoped_list.walk();
     let scoped_children: Vec<_> = scoped_list.children(&mut scoped_cursor).collect();
 
     let path_prefix = scoped_children
         .first()
-        .ok_or_else(|| LaibraryError::Parse("Empty scoped list".to_string()))?
+        .ok_or_else(|| ExtractionError::Parse("Empty scoped list".to_string()))?
         .utf8_text(source_code.as_bytes())
-        .map_err(|e| LaibraryError::Parse(e.to_string()))?
+        .map_err(|e| ExtractionError::Parse(e.to_string()))?
         .to_string();
 
     let use_list = scoped_children
         .iter()
         .find(|c| c.kind() == "use_list")
-        .ok_or_else(|| LaibraryError::Parse("No use list found".to_string()))?;
+        .ok_or_else(|| ExtractionError::Parse("No use list found".to_string()))?;
 
     let mut list_cursor = use_list.walk();
     use_list
@@ -90,7 +93,7 @@ fn extract_multi_reexports(
         .map(|item| {
             let name = item
                 .utf8_text(source_code.as_bytes())
-                .map_err(|e| LaibraryError::Parse(e.to_string()))?;
+                .map_err(|e| ExtractionError::Parse(e.to_string()))?;
             Ok(RustSymbol::SymbolReexport {
                 source_path: format!("{}::{}", path_prefix, name),
                 is_wildcard: false,
@@ -129,7 +132,7 @@ pub enum Format {}
 
         assert!(matches!(
             result.unwrap_err(),
-            LaibraryError::Parse(msg) if msg == "Failed to find symbol reexport"
+            ExtractionError::Parse(msg) if msg == "Failed to find symbol reexport"
         ));
     }
 

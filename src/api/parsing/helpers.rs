@@ -1,4 +1,4 @@
-use daipendency_extractor::LaibraryError;
+use daipendency_extractor::ExtractionError;
 use tree_sitter::Node;
 
 pub fn is_public(node: &Node) -> bool {
@@ -17,7 +17,7 @@ pub fn get_declaration_list(node: Node) -> Option<Node> {
         .find(|n| n.kind() == "declaration_list")
 }
 
-pub fn extract_attributes(node: &Node, source_code: &str) -> Result<Vec<String>, LaibraryError> {
+pub fn extract_attributes(node: &Node, source_code: &str) -> Result<Vec<String>, ExtractionError> {
     let mut current = node.prev_sibling();
     let mut items = Vec::new();
 
@@ -28,7 +28,7 @@ pub fn extract_attributes(node: &Node, source_code: &str) -> Result<Vec<String>,
 
         let text = sibling
             .utf8_text(source_code.as_bytes())
-            .map_err(|e| LaibraryError::Parse(e.to_string()))?;
+            .map_err(|e| ExtractionError::Parse(e.to_string()))?;
         items.push(text.to_string());
 
         current = sibling.prev_sibling();
@@ -38,7 +38,7 @@ pub fn extract_attributes(node: &Node, source_code: &str) -> Result<Vec<String>,
     Ok(items)
 }
 
-pub fn extract_name(node: &Node, source_code: &str) -> Result<String, LaibraryError> {
+pub fn extract_name(node: &Node, source_code: &str) -> Result<String, ExtractionError> {
     let mut cursor = node.walk();
     let children: Vec<_> = node.children(&mut cursor).collect();
     children
@@ -50,7 +50,7 @@ pub fn extract_name(node: &Node, source_code: &str) -> Result<String, LaibraryEr
                 .map(|s| s.to_string())
                 .ok()
         })
-        .ok_or_else(|| LaibraryError::Parse("Failed to extract name".to_string()))
+        .ok_or_else(|| ExtractionError::Parse("Failed to extract name".to_string()))
 }
 
 #[cfg(test)]

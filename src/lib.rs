@@ -1,9 +1,9 @@
-mod analyser;
 mod api;
+mod extractor;
 mod metadata;
 #[cfg(test)]
 mod test_helpers;
 #[cfg(test)]
 mod treesitter_test_helpers;
 
-pub use analyser::RustAnalyser;
+pub use extractor::RustExtractor;

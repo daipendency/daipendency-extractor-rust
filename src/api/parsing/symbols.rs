@@ -1,9 +1,9 @@
 use super::doc_comments::extract_outer_doc_comments;
 use super::helpers::{extract_attributes, get_declaration_list};
-use daipendency_extractor::LaibraryError;
+use daipendency_extractor::ExtractionError;
 use tree_sitter::Node;
 
-pub fn get_symbol_source_code(node: Node, source_code: &str) -> Result<String, LaibraryError> {
+pub fn get_symbol_source_code(node: Node, source_code: &str) -> Result<String, ExtractionError> {
     let mut source_code_with_docs = String::new();
 
     if let Some(doc_comment) = extract_outer_doc_comments(&node, source_code)? {
@@ -22,7 +22,9 @@ pub fn get_symbol_source_code(node: Node, source_code: &str) -> Result<String, L
             let block_node = node
                 .children(&mut cursor)
                 .find(|n| n.kind() == "block")
-                .ok_or_else(|| LaibraryError::Parse("Failed to find function block".to_string()))?;
+                .ok_or_else(|| {
+                    ExtractionError::Parse("Failed to find function block".to_string())
+                })?;
             format!(
                 "{};",
                 &source_code[node.start_byte()..block_node.start_byte()].trim_end()
@@ -30,7 +32,7 @@ pub fn get_symbol_source_code(node: Node, source_code: &str) -> Result<String, L
         }
         "trait_item" => {
             let declaration_list = get_declaration_list(node).ok_or_else(|| {
-                LaibraryError::Parse("Failed to find trait declaration list".to_string())
+                ExtractionError::Parse("Failed to find trait declaration list".to_string())
             })?;
 
             let mut trait_source = String::new();
@@ -55,7 +57,7 @@ pub fn get_symbol_source_code(node: Node, source_code: &str) -> Result<String, L
         _ => node
             .utf8_text(source_code.as_bytes())
             .map(|s| s.to_string())
-            .map_err(|e| LaibraryError::Parse(e.to_string()))?,
+            .map_err(|e| ExtractionError::Parse(e.to_string()))?,
     };
 
     source_code_with_docs.push_str(&symbol_source);
