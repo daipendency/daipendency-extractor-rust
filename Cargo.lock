@@ -40,9 +40,9 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "daipendency-extractor"
-version = "1.0.5"
+version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "468a7940c05a7fb678bb242c040fa44ec0a3a60cc6196f4c4998bc096900e1bd"
+checksum = "0aac6b56a14a97caa9ea1d9b65c7793329ea0ec88302b1ae8e3f776eebf6e35c"
 dependencies = [
  "cc",
  "thiserror",
@@ -52,7 +52,7 @@ dependencies = [
 
 [[package]]
 name = "daipendency-extractor-rust"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "assertables",
  "cc",

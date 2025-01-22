@@ -45,11 +45,11 @@ struct CargoConfig {
 
 pub fn extract_metadata(path: &Path) -> Result<LibraryMetadata, LibraryMetadataError> {
     let cargo_toml_path = path.join("Cargo.toml");
-    let cargo_toml_content = fs::read_to_string(&cargo_toml_path)
-        .map_err(|e| LibraryMetadataError(format!("Failed to read Cargo.toml: {}", e)))?;
+    let cargo_toml_content =
+        fs::read_to_string(&cargo_toml_path).map_err(LibraryMetadataError::MissingManifest)?;
 
     let cargo_config: CargoConfig = toml::from_str(&cargo_toml_content)
-        .map_err(|e| LibraryMetadataError(format!("Failed to parse Cargo.toml: {}", e)))?;
+        .map_err(|e| LibraryMetadataError::MalformedManifest(format!("{}", e)))?;
 
     let readme_path = path.join(README_PATH);
     let documentation = fs::read_to_string(&readme_path).unwrap_or_default();
@@ -107,7 +107,10 @@ mod tests {
 
         let result = extract_metadata(temp_dir.path());
 
-        assert!(matches!(result, Err(LibraryMetadataError(_))));
+        assert!(matches!(
+            result,
+            Err(LibraryMetadataError::MissingManifest(_))
+        ));
     }
 
     #[test]
@@ -139,7 +142,10 @@ mod tests {
 
         let result = extract_metadata(temp_dir.path());
 
-        assert!(matches!(result, Err(LibraryMetadataError(_))));
+        assert!(matches!(
+            result,
+            Err(LibraryMetadataError::MalformedManifest(_))
+        ));
     }
 
     #[test]
@@ -153,7 +159,10 @@ mod tests {
 
         let result = extract_metadata(temp_dir.path());
 
-        assert!(matches!(result, Err(LibraryMetadataError(_))));
+        assert!(matches!(
+            result,
+            Err(LibraryMetadataError::MalformedManifest(_))
+        ));
     }
 
     #[test]
