@@ -1,11 +1,18 @@
-use super::{api, metadata};
+use super::{api, dependencies, metadata};
 use daipendency_extractor::{
-    ExtractionError, Extractor, LibraryMetadata, LibraryMetadataError, Namespace,
+    DependencyResolutionError, ExtractionError, Extractor, LibraryMetadata, LibraryMetadataError,
+    Namespace,
 };
 use std::path::Path;
 use tree_sitter::{Language, Parser};
 
 pub struct RustExtractor;
+
+impl Default for RustExtractor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl RustExtractor {
     pub fn new() -> Self {
@@ -29,10 +36,20 @@ impl Extractor for RustExtractor {
     ) -> Result<Vec<Namespace>, ExtractionError> {
         api::build_public_api(&metadata.entry_point, &metadata.name, parser)
     }
+
+    fn resolve_dependency_path(
+        &self,
+        dependency_name: &str,
+        dependant_path: &Path,
+    ) -> Result<std::path::PathBuf, DependencyResolutionError> {
+        dependencies::resolve_dependency_path(dependency_name, dependant_path)
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use assertables::{assert_contains, assert_ok};
+
     use super::*;
     use crate::test_helpers::{create_temp_dir, setup_parser};
 
@@ -86,5 +103,17 @@ pub fn test_function() -> i32 {
         let root = namespaces.iter().find(|n| n.name == "test_crate").unwrap();
         assert_eq!(root.symbols.len(), 1);
         assert_eq!(root.symbols[0].name, "test_function");
+    }
+
+    #[test]
+    fn resolve_dependency_path_success() {
+        let cargo_toml = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let analyser = RustExtractor::new();
+        let dependency_name = "tree-sitter";
+
+        let result = analyser.resolve_dependency_path(dependency_name, &cargo_toml);
+
+        assert_ok!(&result);
+        assert_contains!(result.unwrap().to_str().unwrap(), dependency_name);
     }
 }

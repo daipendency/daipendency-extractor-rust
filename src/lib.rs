@@ -1,4 +1,5 @@
 mod api;
+mod dependencies;
 mod extractor;
 mod metadata;
 #[cfg(test)]
