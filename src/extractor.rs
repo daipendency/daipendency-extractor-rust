@@ -107,7 +107,7 @@ pub fn test_function() -> i32 {
 
     #[test]
     fn resolve_dependency_path_success() {
-        let cargo_toml = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let cargo_toml = Path::new(env!("CARGO_MANIFEST_DIR"));
         let analyser = RustExtractor::new();
         let dependency_name = "tree-sitter";
 

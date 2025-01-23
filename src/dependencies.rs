@@ -7,8 +7,9 @@ pub fn resolve_dependency_path(
     dependency_name: &str,
     dependant_path: &Path,
 ) -> Result<std::path::PathBuf, DependencyResolutionError> {
+    let manifest_path = dependant_path.join("Cargo.toml");
     let metadata = MetadataCommand::new()
-        .manifest_path(dependant_path)
+        .manifest_path(manifest_path)
         .exec()
         .map_err(|e| DependencyResolutionError::RetrievalFailure(e.to_string()))?;
 
@@ -28,7 +29,7 @@ mod tests {
 
     #[test]
     fn finds_dependency_manifest() {
-        let cargo_toml = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let cargo_toml = Path::new(env!("CARGO_MANIFEST_DIR"));
         let dependency_name = "tree-sitter";
 
         let result = resolve_dependency_path(dependency_name, &cargo_toml);
@@ -39,7 +40,7 @@ mod tests {
 
     #[test]
     fn missing_dependency() {
-        let cargo_toml = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let cargo_toml = Path::new(env!("CARGO_MANIFEST_DIR"));
 
         let result = resolve_dependency_path("non-existent-dependency", &cargo_toml);
 
