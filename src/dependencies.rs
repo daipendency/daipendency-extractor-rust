@@ -13,18 +13,20 @@ pub fn resolve_dependency_path(
         .exec()
         .map_err(|e| DependencyResolutionError::RetrievalFailure(e.to_string()))?;
 
-    metadata
+    let dependency_manifest_path: std::path::PathBuf = metadata
         .packages
         .iter()
         .find(|package| package.name == dependency_name)
         .map(|package| package.manifest_path.clone().into())
-        .ok_or_else(|| DependencyResolutionError::MissingDependency(dependency_name.to_string()))
+        .ok_or_else(|| DependencyResolutionError::MissingDependency(dependency_name.to_string()))?;
+
+    Ok(dependency_manifest_path.parent().unwrap().to_path_buf())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use assertables::{assert_contains, assert_ok};
+    use assertables::{assert_contains, assert_not_ends_with, assert_ok};
     use tempfile::TempDir;
 
     #[test]
@@ -35,7 +37,9 @@ mod tests {
         let result = resolve_dependency_path(dependency_name, &cargo_toml);
 
         assert_ok!(&result);
-        assert_contains!(result.unwrap().to_str().unwrap(), dependency_name);
+        let dependency_path = result.unwrap();
+        assert_contains!(dependency_path.to_str().unwrap(), dependency_name);
+        assert_not_ends_with!(dependency_path.to_str().unwrap(), "Cargo.toml");
     }
 
     #[test]
@@ -51,7 +55,7 @@ mod tests {
     }
 
     #[test]
-    fn io_error() {
+    fn invalid_manifest() {
         let temp_dir = TempDir::new().unwrap();
         let non_existent_path = temp_dir.path().join("non-existent").join("Cargo.toml");
 
