@@ -38,14 +38,21 @@ fn extract_wildcard_reexport(
 ) -> Result<Vec<RustSymbol>, ExtractionError> {
     let mut cursor = wildcard.walk();
     let children: Vec<_> = wildcard.children(&mut cursor).collect();
+
     let module_path = children
         .iter()
-        .find(|c| c.kind() == "identifier")
+        .find(|c| c.kind() == "identifier" || c.kind() == "scoped_identifier")
         .ok_or_else(|| {
-            ExtractionError::Malformed("Failed to find module path in wildcard import".to_string())
+            ExtractionError::Malformed(format!(
+                "Failed to find module path in wildcard import: {}",
+                wildcard
+                    .utf8_text(source_code.as_bytes())
+                    .unwrap_or_default()
+            ))
         })?
         .utf8_text(source_code.as_bytes())
         .map_err(|e| ExtractionError::Malformed(e.to_string()))?;
+
     Ok(vec![RustSymbol::SymbolReexport {
         source_path: module_path.to_string(),
         is_wildcard: true,
@@ -235,7 +242,7 @@ pub use inner::{TextFormatter, OtherType};
     }
 
     #[test]
-    fn wildcard_reexport() {
+    fn relative_wildcard_reexport() {
         let source_code = r#"
 pub use inner::*;
 "#;
@@ -252,6 +259,27 @@ pub use inner::*;
                 is_wildcard,
                 alias: None
             } if source_path == "inner" && *is_wildcard
+        );
+    }
+
+    #[test]
+    fn absolute_wildcard_reexport() {
+        let source_code = r#"
+pub use crate::inner::*;
+"#;
+        let tree = make_tree(source_code);
+        let use_declaration = find_child_node(tree.root_node(), "use_declaration");
+
+        let symbols = extract_symbol_reexports(&use_declaration, source_code).unwrap();
+
+        assert_eq!(symbols.len(), 1);
+        assert_matches!(
+            &symbols[0],
+            RustSymbol::SymbolReexport {
+                source_path,
+                is_wildcard,
+                alias: None
+            } if source_path == "crate::inner" && *is_wildcard
         );
     }
 }
