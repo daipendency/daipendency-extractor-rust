@@ -23,6 +23,8 @@ pub enum RustSymbol {
     SymbolReexport {
         source_path: String,
         is_wildcard: bool,
+        /// The alias of the reexported symbol, if any
+        alias: Option<String>,
     },
 }
 

@@ -16,14 +16,19 @@ pub fn extract_symbol_reexports(
 
     if let Some(scoped) = children.iter().find(|c| c.kind() == "scoped_identifier") {
         Ok(vec![extract_single_reexport(scoped, source_code)?])
+    } else if let Some(use_as) = children.iter().find(|c| c.kind() == "use_as_clause") {
+        Ok(vec![extract_renamed_reexport(use_as, source_code)?])
     } else if let Some(scoped_list) = children.iter().find(|c| c.kind() == "scoped_use_list") {
         extract_multi_reexports(scoped_list, source_code)
     } else if let Some(wildcard) = children.iter().find(|c| c.kind() == "use_wildcard") {
         extract_wildcard_reexport(wildcard, source_code)
     } else {
-        Err(ExtractionError::Malformed(
-            "Failed to find symbol reexport".to_string(),
-        ))
+        Err(ExtractionError::Malformed(format!(
+            "Failed to find symbol reexport: {}",
+            use_declaration_node
+                .utf8_text(source_code.as_bytes())
+                .unwrap()
+        )))
     }
 }
 
@@ -44,6 +49,7 @@ fn extract_wildcard_reexport(
     Ok(vec![RustSymbol::SymbolReexport {
         source_path: module_path.to_string(),
         is_wildcard: true,
+        alias: None,
     }])
 }
 
@@ -64,6 +70,36 @@ fn extract_single_reexport(
     Ok(RustSymbol::SymbolReexport {
         source_path,
         is_wildcard: false,
+        alias: None,
+    })
+}
+
+fn extract_renamed_reexport(
+    use_as: &Node,
+    source_code: &str,
+) -> Result<RustSymbol, ExtractionError> {
+    let mut cursor = use_as.walk();
+    let children: Vec<_> = use_as.children(&mut cursor).collect();
+
+    let source_path = children
+        .first()
+        .ok_or_else(|| ExtractionError::Malformed("Empty use_as clause".to_string()))?
+        .utf8_text(source_code.as_bytes())
+        .map_err(|e| ExtractionError::Malformed(e.to_string()))?
+        .to_string();
+
+    let alias = children
+        .iter()
+        .find(|c| c.kind() == "identifier")
+        .ok_or_else(|| ExtractionError::Malformed("No alias found in use_as clause".to_string()))?
+        .utf8_text(source_code.as_bytes())
+        .map_err(|e| ExtractionError::Malformed(e.to_string()))?
+        .to_string();
+
+    Ok(RustSymbol::SymbolReexport {
+        source_path,
+        is_wildcard: false,
+        alias: Some(alias),
     })
 }
 
@@ -97,6 +133,7 @@ fn extract_multi_reexports(
             Ok(RustSymbol::SymbolReexport {
                 source_path: format!("{}::{}", path_prefix, name),
                 is_wildcard: false,
+                alias: None,
             })
         })
         .collect()
@@ -107,7 +144,7 @@ mod tests {
     use super::*;
     use crate::api::parsing::test_helpers::make_tree;
     use crate::treesitter_test_helpers::find_child_node;
-    use assertables::assert_contains;
+    use assertables::{assert_contains, assert_matches, assert_ok};
 
     fn get_reexports(symbols: &[RustSymbol]) -> Vec<String> {
         symbols
@@ -121,19 +158,17 @@ mod tests {
 
     #[test]
     fn non_import() {
-        let source_code = r#"
-pub enum Format {}
-"#;
+        let source_code = r#"pub enum Format {}"#;
         let tree = make_tree(source_code);
         let root_node = tree.root_node();
         let use_declaration = find_child_node(root_node, "enum_item");
 
         let result = extract_symbol_reexports(&use_declaration, source_code);
 
-        assert!(matches!(
+        assert_matches!(
             result.unwrap_err(),
-            ExtractionError::Malformed(msg) if msg == "Failed to find symbol reexport"
-        ));
+            ExtractionError::Malformed(msg) if msg == format!("Failed to find symbol reexport: {}", source_code)
+        );
     }
 
     #[test]
@@ -164,6 +199,27 @@ pub use inner::Format;
     }
 
     #[test]
+    fn renamed_reexport() {
+        let source_code = r#"pub use inner::Foo as Bar;"#;
+        let tree = make_tree(source_code);
+        let use_declaration = find_child_node(tree.root_node(), "use_declaration");
+
+        let result = extract_symbol_reexports(&use_declaration, source_code);
+
+        assert_ok!(&result);
+        let symbols = result.unwrap();
+        assert_eq!(symbols.len(), 1);
+        assert_matches!(
+            &symbols[0],
+            RustSymbol::SymbolReexport {
+                source_path,
+                is_wildcard: false,
+                alias: Some(alias)
+            } if source_path == "inner::Foo" && alias == "Bar"
+        );
+    }
+
+    #[test]
     fn multiple_reexports() {
         let source_code = r#"
 pub use inner::{TextFormatter, OtherType};
@@ -189,10 +245,13 @@ pub use inner::*;
         let symbols = extract_symbol_reexports(&use_declaration, source_code).unwrap();
 
         assert_eq!(symbols.len(), 1);
-        assert!(matches!(
+        assert_matches!(
             &symbols[0],
-            RustSymbol::SymbolReexport { source_path, is_wildcard }
-            if source_path == "inner" && *is_wildcard
-        ));
+            RustSymbol::SymbolReexport {
+                source_path,
+                is_wildcard,
+                alias: None
+            } if source_path == "inner" && *is_wildcard
+        );
     }
 }

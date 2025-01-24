@@ -17,7 +17,16 @@ pub struct Module {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Reference {
+    /// A symbol that is reexported directly (e.g. `pub use submodule::Foo`).
     Symbol(String),
+    /// A symbol that is reexported with an alias (e.g. `pub use submodule::Foo as Bar`).
+    AliasedSymbol {
+        /// The original symbol that is reexported (e.g. `submodule::Foo`).
+        source_path: String,
+        /// The alias that the original symbol is reexported as (e.g. `Bar`).
+        alias: String,
+    },
+    /// A symbol that is reexported with a wildcard (e.g. `pub use submodule::*`).
     Wildcard(String),
 }
 
@@ -117,12 +126,18 @@ fn collect_module_symbols(
             parsing::RustSymbol::SymbolReexport {
                 source_path,
                 is_wildcard,
+                alias,
             } => {
                 let source_path = prefix_namespace(&source_path, namespace_prefix);
                 if is_wildcard {
                     current_namespace
                         .references
                         .push(Reference::Wildcard(source_path));
+                } else if let Some(alias_name) = alias {
+                    current_namespace.references.push(Reference::AliasedSymbol {
+                        source_path,
+                        alias: alias_name,
+                    });
                 } else {
                     current_namespace
                         .references
@@ -510,11 +525,46 @@ pub mod child {
                 root.references[0],
                 Reference::Wildcard("module".to_string())
             );
+        }
 
-            let module = get_module("module", &modules).unwrap();
-            assert_eq!(module.definitions.len(), 1);
-            assert_eq!(module.references.len(), 0);
-            assert_eq!(module.definitions[0].name, "InnerStruct");
+        #[test]
+        fn aliased_reexport() {
+            let temp_dir = create_temp_dir();
+            let lib_rs = temp_dir.path().join("src").join("lib.rs");
+            let submodule_rs = temp_dir.path().join("src").join("submodule.rs");
+
+            create_file(
+                &lib_rs,
+                r#"
+    mod submodule;
+    pub use submodule::Foo as Bar;
+    "#,
+            );
+            create_file(
+                &submodule_rs,
+                r#"
+    pub struct Foo;
+    "#,
+            );
+
+            let mut parser = setup_parser();
+            let modules = collect_symbols(&lib_rs, &mut parser).unwrap();
+
+            assert_eq!(modules.len(), 2);
+            let root = get_module("", &modules).unwrap();
+            assert_eq!(root.definitions.len(), 0);
+            assert_eq!(root.references.len(), 1);
+            assert_eq!(
+                root.references[0],
+                Reference::AliasedSymbol {
+                    source_path: "submodule::Foo".to_string(),
+                    alias: "Bar".to_string(),
+                }
+            );
+            let submodule = get_module("submodule", &modules).unwrap();
+            assert_eq!(submodule.definitions.len(), 1);
+            assert_eq!(submodule.references.len(), 0);
+            assert_eq!(submodule.definitions[0].name, "Foo");
         }
     }
 

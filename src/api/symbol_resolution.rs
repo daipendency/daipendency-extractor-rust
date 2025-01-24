@@ -90,6 +90,28 @@ fn resolve_public_symbols(
                         })
                         .for_each(drop);
                 }
+                Reference::AliasedSymbol {
+                    source_path: source,
+                    alias,
+                } => {
+                    let normalised_path = normalise_reference(source, &module.name)?;
+                    let symbol = Symbol {
+                        name: alias.clone(),
+                        source_code: format!("pub use {} as {};", normalised_path, alias),
+                    };
+                    let alias_path = if module.name.is_empty() {
+                        alias.clone()
+                    } else {
+                        format!("{}::{}", module.name, alias)
+                    };
+                    resolved_symbols.insert(
+                        alias_path,
+                        ResolvedSymbol {
+                            symbol,
+                            modules: vec![module.name.clone()],
+                        },
+                    );
+                }
             }
         }
     }
@@ -613,6 +635,80 @@ mod tests {
             assert_eq!(resolution.symbols.len(), 2);
             assert_set_eq!(resolution.get_symbol_modules(symbol1), vec![String::new()]);
             assert_set_eq!(resolution.get_symbol_modules(symbol2), vec![String::new()]);
+        }
+
+        #[test]
+        fn aliased_reexport() {
+            let original_symbol = stub_symbol_with_name("test");
+            let modules = vec![
+                Module {
+                    name: String::new(),
+                    definitions: Vec::new(),
+                    references: vec![Reference::AliasedSymbol {
+                        source_path: "inner::test".to_string(),
+                        alias: "aliased_test".to_string(),
+                    }],
+                    is_public: true,
+                    doc_comment: None,
+                },
+                Module {
+                    name: "inner".to_string(),
+                    definitions: vec![original_symbol],
+                    references: Vec::new(),
+                    is_public: false,
+                    doc_comment: None,
+                },
+            ];
+
+            let resolution = resolve_symbols(&modules).unwrap();
+
+            assert_eq!(resolution.symbols.len(), 1);
+            let resolved_symbol = &resolution.symbols[0];
+            assert_eq!(
+                resolved_symbol.symbol,
+                Symbol {
+                    name: "aliased_test".to_string(),
+                    source_code: "pub use inner::test as aliased_test;".to_string(),
+                }
+            );
+            assert_set_eq!(resolved_symbol.modules, vec![String::new()]);
+        }
+
+        #[test]
+        fn aliased_reexport_from_submodule() {
+            let original_symbol = stub_symbol_with_name("test");
+            let modules = vec![
+                Module {
+                    name: "reexporter".to_string(),
+                    definitions: Vec::new(),
+                    references: vec![Reference::AliasedSymbol {
+                        source_path: "inner::test".to_string(),
+                        alias: "aliased_test".to_string(),
+                    }],
+                    is_public: true,
+                    doc_comment: None,
+                },
+                Module {
+                    name: "inner".to_string(),
+                    definitions: vec![original_symbol],
+                    references: Vec::new(),
+                    is_public: false,
+                    doc_comment: None,
+                },
+            ];
+
+            let resolution = resolve_symbols(&modules).unwrap();
+
+            assert_eq!(resolution.symbols.len(), 1);
+            let resolved_symbol = &resolution.symbols[0];
+            assert_eq!(
+                resolved_symbol.symbol,
+                Symbol {
+                    name: "aliased_test".to_string(),
+                    source_code: "pub use inner::test as aliased_test;".to_string(),
+                }
+            );
+            assert_set_eq!(resolved_symbol.modules, vec!["reexporter".to_string()]);
         }
     }
 
