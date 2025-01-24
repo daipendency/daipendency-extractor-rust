@@ -73,8 +73,8 @@ fn resolve_public_symbols(
                         .find(|m| m.name == normalised_path)
                         .ok_or_else(|| {
                             ExtractionError::Malformed(format!(
-                                "Could not find module '{}'",
-                                normalised_path
+                                "Could not find module '{}' (glob reexport from '{}')",
+                                normalised_path, module.name
                             ))
                         })?;
 
