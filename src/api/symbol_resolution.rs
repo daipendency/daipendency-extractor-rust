@@ -68,27 +68,21 @@ fn resolve_public_symbols(
                 }
                 Reference::Wildcard(module_path) => {
                     let normalised_path = normalise_reference(module_path, &module.name)?;
-                    let referenced_module = all_modules
-                        .iter()
-                        .find(|m| m.name == normalised_path)
-                        .ok_or_else(|| {
-                            ExtractionError::Malformed(format!(
-                                "Could not find module '{}' (glob reexport from '{}')",
-                                normalised_path, module.name
-                            ))
-                        })?;
+                    let referenced_module = all_modules.iter().find(|m| m.name == normalised_path);
 
-                    referenced_module
-                        .definitions
-                        .iter()
-                        .map(|symbol| {
-                            let symbol_path = get_symbol_path(&symbol.name, referenced_module);
-                            references_by_symbol_path
-                                .entry(symbol_path)
-                                .or_default()
-                                .push(module.name.clone());
-                        })
-                        .for_each(drop);
+                    if let Some(referenced_module) = referenced_module {
+                        referenced_module
+                            .definitions
+                            .iter()
+                            .map(|symbol| {
+                                let symbol_path = get_symbol_path(&symbol.name, referenced_module);
+                                references_by_symbol_path
+                                    .entry(symbol_path)
+                                    .or_default()
+                                    .push(module.name.clone());
+                            })
+                            .for_each(drop);
+                    }
                 }
                 Reference::AliasedSymbol {
                     source_path: source,
