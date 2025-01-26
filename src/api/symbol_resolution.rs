@@ -847,11 +847,7 @@ mod tests {
 
             let resolution = resolve_symbols(&modules).unwrap();
 
-            assert_eq!(
-                resolution.symbols.len(),
-                4,
-                "Expected 4 symbols to be resolved"
-            );
+            assert_eq!(resolution.symbols.len(), 4,);
             assert_set_eq!(
                 resolution.get_symbol_modules(symbol1.clone()),
                 vec![String::new()]
