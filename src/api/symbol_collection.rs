@@ -5,9 +5,10 @@ use std::path::{Path, PathBuf};
 use tree_sitter::Parser;
 
 use super::parsing;
+use super::parsing::Reexport;
 
 #[derive(Debug, Clone)]
-pub struct ModuleFile {
+pub struct Module {
     pub definitions: Vec<Symbol>,
     pub references: Vec<Reference>,
 }
@@ -19,10 +20,10 @@ pub struct ModuleFile {
 /// - A submodule, where `src/submodule/mod.rs` is the entry point and other files in `src/submodule/*.rs` are internal.
 /// - A `mod submodule {...}` block, where the entry point is the contents of the block (symbol declarations and reexports), and there are no internal files.
 #[derive(Debug, Clone)]
-pub struct Module {
+pub struct ExternalModule {
     pub name: String,
-    pub entry_point: ModuleFile,
-    pub internal_files: HashMap<String, ModuleFile>,
+    pub entry_point: Module,
+    pub internal_files: HashMap<String, Module>,
     pub is_public: bool,
     pub doc_comment: Option<String>,
 }
@@ -46,7 +47,7 @@ pub enum Reference {
 pub fn collect_symbols(
     entry_point: &Path,
     parser: &mut Parser,
-) -> Result<Vec<Module>, ExtractionError> {
+) -> Result<Vec<ExternalModule>, ExtractionError> {
     let mut visited_files = HashMap::new();
     collect_symbols_recursively(entry_point, "", true, parser, &mut visited_files)
 }
@@ -57,7 +58,7 @@ fn collect_symbols_recursively(
     is_public: bool,
     parser: &mut Parser,
     visited_files: &mut HashMap<PathBuf, bool>,
-) -> Result<Vec<Module>, ExtractionError> {
+) -> Result<Vec<ExternalModule>, ExtractionError> {
     if visited_files.contains_key(&file_path.to_path_buf()) {
         return Ok(Vec::new());
     }
@@ -86,11 +87,11 @@ fn collect_module_symbols(
     parser: &mut Parser,
     visited_files: &mut HashMap<PathBuf, bool>,
     doc_comment: Option<String>,
-) -> Result<Vec<Module>, ExtractionError> {
+) -> Result<Vec<ExternalModule>, ExtractionError> {
     let mut modules = Vec::new();
-    let mut current_namespace = Module {
+    let mut current_namespace = ExternalModule {
         name: namespace_prefix.to_string(),
-        entry_point: ModuleFile {
+        entry_point: Module {
             definitions: Vec::new(),
             references: Vec::new(),
         },
@@ -162,28 +163,31 @@ fn collect_module_symbols(
             }
             parsing::RustSymbol::SymbolReexport {
                 source_path,
-                is_wildcard,
-                alias,
+                reexport_type,
             } => {
                 let source_path = prefix_namespace(&source_path, namespace_prefix);
-                if is_wildcard {
-                    current_namespace
-                        .entry_point
-                        .references
-                        .push(Reference::Wildcard(source_path));
-                } else if let Some(alias_name) = alias {
-                    current_namespace
-                        .entry_point
-                        .references
-                        .push(Reference::AliasedSymbol {
-                            source_path,
-                            alias: alias_name,
-                        });
-                } else {
-                    current_namespace
-                        .entry_point
-                        .references
-                        .push(Reference::Symbol(source_path));
+                match reexport_type {
+                    Reexport::Simple => {
+                        current_namespace
+                            .entry_point
+                            .references
+                            .push(Reference::Symbol(source_path));
+                    }
+                    Reexport::Wildcard => {
+                        current_namespace
+                            .entry_point
+                            .references
+                            .push(Reference::Wildcard(source_path));
+                    }
+                    Reexport::Aliased(alias_name) => {
+                        current_namespace
+                            .entry_point
+                            .references
+                            .push(Reference::AliasedSymbol {
+                                source_path,
+                                alias: alias_name,
+                            });
+                    }
                 }
             }
         }
