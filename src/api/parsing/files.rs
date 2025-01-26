@@ -6,14 +6,14 @@ pub struct RustFile {
     pub symbols: Vec<RustSymbol>,
 }
 
-/// Type of symbol reexport in a Rust module
+/// Type of symbol import in a Rust module
 #[derive(Debug, Clone)]
-pub enum Reexport {
-    /// Direct reexport (e.g. `pub use submodule::Foo`)
+pub enum ImportType {
+    /// Direct import (e.g. `use submodule::Foo`)
     Simple,
-    /// Wildcard reexport (e.g. `pub use submodule::*`)
+    /// Wildcard import (e.g. `use submodule::*`)
     Wildcard,
-    /// Aliased reexport (e.g. `pub use submodule::Foo as Bar`)
+    /// Aliased import (e.g. `use submodule::Foo as Bar`)
     Aliased(String),
 }
 
@@ -33,7 +33,7 @@ pub enum RustSymbol {
     },
     SymbolReexport {
         source_path: String,
-        reexport_type: Reexport,
+        import_type: ImportType,
     },
 }
 

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use tree_sitter::Parser;
 
 use super::parsing;
-use super::parsing::Reexport;
+use super::parsing::ImportType;
 
 #[derive(Debug, Clone)]
 pub struct Module {
@@ -163,23 +163,23 @@ fn collect_module_symbols(
             }
             parsing::RustSymbol::SymbolReexport {
                 source_path,
-                reexport_type,
+                import_type: reexport_type,
             } => {
                 let source_path = prefix_namespace(&source_path, namespace_prefix);
                 match reexport_type {
-                    Reexport::Simple => {
+                    ImportType::Simple => {
                         current_namespace
                             .entry_point
                             .references
                             .push(Reference::Symbol(source_path));
                     }
-                    Reexport::Wildcard => {
+                    ImportType::Wildcard => {
                         current_namespace
                             .entry_point
                             .references
                             .push(Reference::Wildcard(source_path));
                     }
-                    Reexport::Aliased(alias_name) => {
+                    ImportType::Aliased(alias_name) => {
                         current_namespace
                             .entry_point
                             .references

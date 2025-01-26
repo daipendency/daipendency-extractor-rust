@@ -1,4 +1,4 @@
-use super::files::{Reexport, RustSymbol};
+use super::files::{ImportType, RustSymbol};
 use super::helpers::is_public;
 use daipendency_extractor::ExtractionError;
 use tree_sitter::Node;
@@ -55,7 +55,7 @@ fn extract_wildcard_reexport(
 
     Ok(vec![RustSymbol::SymbolReexport {
         source_path: module_path.to_string(),
-        reexport_type: Reexport::Wildcard,
+        import_type: ImportType::Wildcard,
     }])
 }
 
@@ -75,7 +75,7 @@ fn extract_single_reexport(
         .join("");
     Ok(RustSymbol::SymbolReexport {
         source_path,
-        reexport_type: Reexport::Simple,
+        import_type: ImportType::Simple,
     })
 }
 
@@ -103,7 +103,7 @@ fn extract_renamed_reexport(
 
     Ok(RustSymbol::SymbolReexport {
         source_path,
-        reexport_type: Reexport::Aliased(alias),
+        import_type: ImportType::Aliased(alias),
     })
 }
 
@@ -136,7 +136,7 @@ fn extract_multi_reexports(
                 .map_err(|e| ExtractionError::Malformed(e.to_string()))?;
             Ok(RustSymbol::SymbolReexport {
                 source_path: format!("{}::{}", path_prefix, name),
-                reexport_type: Reexport::Simple,
+                import_type: ImportType::Simple,
             })
         })
         .collect()
@@ -216,7 +216,7 @@ pub use inner::Format;
             &symbols[0],
             RustSymbol::SymbolReexport {
                 source_path,
-                reexport_type: Reexport::Aliased(alias)
+                import_type: ImportType::Aliased(alias)
             } if source_path == "inner::Foo" && alias == "Bar"
         );
     }
@@ -251,7 +251,7 @@ pub use inner::*;
             &symbols[0],
             RustSymbol::SymbolReexport {
                 source_path,
-                reexport_type: Reexport::Wildcard,
+                import_type: ImportType::Wildcard,
             } if source_path == "inner"
         );
     }
@@ -271,7 +271,7 @@ pub use crate::inner::*;
             &symbols[0],
             RustSymbol::SymbolReexport {
                 source_path,
-                reexport_type: Reexport::Wildcard,
+                import_type: ImportType::Wildcard,
             } if source_path == "crate::inner"
         );
     }

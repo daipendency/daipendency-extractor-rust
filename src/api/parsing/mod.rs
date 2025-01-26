@@ -16,7 +16,7 @@ use macros::get_macro_source_code;
 use symbol_reexports::extract_symbol_reexports;
 use symbols::get_symbol_source_code;
 
-pub use files::{Reexport, RustFile, RustSymbol};
+pub use files::{ImportType, RustFile, RustSymbol};
 
 pub fn parse_rust_file(content: &str, parser: &mut Parser) -> Result<RustFile, ExtractionError> {
     let tree = parser
