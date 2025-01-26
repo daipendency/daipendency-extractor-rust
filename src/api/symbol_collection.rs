@@ -8,7 +8,7 @@ use super::parsing;
 use super::parsing::ImportType;
 
 #[derive(Debug, Clone)]
-pub struct Module {
+pub struct ModuleContents {
     pub definitions: Vec<Symbol>,
     pub references: Vec<Reference>,
 }
@@ -20,10 +20,10 @@ pub struct Module {
 /// - A submodule, where `src/submodule/mod.rs` is the entry point and other files in `src/submodule/*.rs` are internal.
 /// - A `mod submodule {...}` block, where the entry point is the contents of the block (symbol declarations and reexports), and there are no internal files.
 #[derive(Debug, Clone)]
-pub struct ExternalModule {
+pub struct Module {
     pub name: String,
-    pub entry_point: Module,
-    pub internal_files: HashMap<String, Module>,
+    pub entry_point: ModuleContents,
+    pub internal_files: HashMap<String, ModuleContents>,
     pub is_public: bool,
     pub doc_comment: Option<String>,
 }
@@ -47,7 +47,7 @@ pub enum Reference {
 pub fn collect_symbols(
     entry_point: &Path,
     parser: &mut Parser,
-) -> Result<Vec<ExternalModule>, ExtractionError> {
+) -> Result<Vec<Module>, ExtractionError> {
     let mut visited_files = HashMap::new();
     collect_symbols_recursively(entry_point, "", true, parser, &mut visited_files)
 }
@@ -58,7 +58,7 @@ fn collect_symbols_recursively(
     is_public: bool,
     parser: &mut Parser,
     visited_files: &mut HashMap<PathBuf, bool>,
-) -> Result<Vec<ExternalModule>, ExtractionError> {
+) -> Result<Vec<Module>, ExtractionError> {
     if visited_files.contains_key(&file_path.to_path_buf()) {
         return Ok(Vec::new());
     }
@@ -87,11 +87,11 @@ fn collect_module_symbols(
     parser: &mut Parser,
     visited_files: &mut HashMap<PathBuf, bool>,
     doc_comment: Option<String>,
-) -> Result<Vec<ExternalModule>, ExtractionError> {
+) -> Result<Vec<Module>, ExtractionError> {
     let mut modules = Vec::new();
-    let mut current_namespace = ExternalModule {
+    let mut current_namespace = Module {
         name: namespace_prefix.to_string(),
-        entry_point: Module {
+        entry_point: ModuleContents {
             definitions: Vec::new(),
             references: Vec::new(),
         },

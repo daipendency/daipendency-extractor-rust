@@ -2,7 +2,7 @@ use daipendency_extractor::ExtractionError;
 use daipendency_extractor::Symbol;
 use std::collections::{HashMap, HashSet};
 
-use super::symbol_collection::{ExternalModule, Reference};
+use super::symbol_collection::{Module, Reference};
 
 #[derive(Debug, Clone)]
 pub struct ResolvedSymbol {
@@ -18,9 +18,9 @@ pub struct SymbolResolution {
 
 /// Resolve symbol references by matching them with their corresponding definitions.
 pub fn resolve_symbols(
-    all_modules: &[ExternalModule],
+    all_modules: &[Module],
 ) -> Result<SymbolResolution, ExtractionError> {
-    let public_modules: Vec<ExternalModule> = all_modules
+    let public_modules: Vec<Module> = all_modules
         .iter()
         .filter(|m| m.name.is_empty() || m.is_public)
         .cloned()
@@ -40,8 +40,8 @@ pub fn resolve_symbols(
 }
 
 fn resolve_public_symbols(
-    all_modules: &[ExternalModule],
-    public_modules: &[ExternalModule],
+    all_modules: &[Module],
+    public_modules: &[Module],
 ) -> Result<Vec<ResolvedSymbol>, ExtractionError> {
     let mut resolved_symbols: HashMap<String, ResolvedSymbol> = HashMap::new();
     let mut references_by_symbol_path: HashMap<String, Vec<String>> = HashMap::new();
@@ -156,7 +156,7 @@ fn resolve_public_symbols(
     Ok(public_symbols)
 }
 
-fn get_symbol_path(symbol_name: &str, module: &ExternalModule) -> String {
+fn get_symbol_path(symbol_name: &str, module: &Module) -> String {
     if module.name.is_empty() {
         symbol_name.to_string()
     } else {
@@ -189,7 +189,7 @@ fn normalise_reference(reference: &str, current_module: &str) -> Result<String, 
     }
 }
 
-fn get_doc_comments_by_module(public_modules: &[ExternalModule]) -> HashMap<String, String> {
+fn get_doc_comments_by_module(public_modules: &[Module]) -> HashMap<String, String> {
     let doc_comments = public_modules
         .iter()
         .filter_map(|module| {
@@ -205,7 +205,7 @@ fn get_doc_comments_by_module(public_modules: &[ExternalModule]) -> HashMap<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::symbol_collection::Module;
+    use crate::api::symbol_collection::ModuleContents;
     use assertables::*;
 
     impl SymbolResolution {
@@ -226,9 +226,9 @@ mod tests {
         #[test]
         fn at_root() {
             let symbol = stub_symbol();
-            let modules = vec![ExternalModule {
+            let modules = vec![Module {
                 name: String::new(),
-                entry_point: Module {
+                entry_point: ModuleContents {
                     definitions: vec![symbol.clone()],
                     references: Vec::new(),
                 },
@@ -246,9 +246,9 @@ mod tests {
         #[test]
         fn at_submodule() {
             let symbol = stub_symbol();
-            let modules = vec![ExternalModule {
+            let modules = vec![Module {
                 name: "outer::inner".to_string(),
-                entry_point: Module {
+                entry_point: ModuleContents {
                     definitions: vec![symbol.clone()],
                     references: Vec::new(),
                 },
@@ -276,9 +276,9 @@ mod tests {
         fn via_public_module() {
             let symbol = stub_symbol();
             let modules = vec![
-                ExternalModule {
+                Module {
                     name: String::new(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: Vec::new(),
                         references: vec![Reference::Symbol("inner::test".to_string())],
                     },
@@ -286,9 +286,9 @@ mod tests {
                     is_public: true,
                     doc_comment: None,
                 },
-                ExternalModule {
+                Module {
                     name: "inner".to_string(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: vec![symbol.clone()],
                         references: Vec::new(),
                     },
@@ -311,9 +311,9 @@ mod tests {
         fn via_private_module() {
             let symbol = stub_symbol();
             let modules = vec![
-                ExternalModule {
+                Module {
                     name: String::new(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: Vec::new(),
                         references: vec![Reference::Symbol("inner::test".to_string())],
                     },
@@ -321,9 +321,9 @@ mod tests {
                     is_public: true,
                     doc_comment: None,
                 },
-                ExternalModule {
+                Module {
                     name: "inner".to_string(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: vec![symbol.clone()],
                         references: Vec::new(),
                     },
@@ -343,9 +343,9 @@ mod tests {
         fn via_nested_public_module() {
             let symbol = stub_symbol();
             let modules = vec![
-                ExternalModule {
+                Module {
                     name: "foo::bar".to_string(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: Vec::new(),
                         references: vec![Reference::Symbol("outer::inner::test".to_string())],
                     },
@@ -353,9 +353,9 @@ mod tests {
                     is_public: true,
                     doc_comment: None,
                 },
-                ExternalModule {
+                Module {
                     name: "outer::inner".to_string(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: vec![symbol.clone()],
                         references: Vec::new(),
                     },
@@ -379,9 +379,9 @@ mod tests {
             let reexported_symbol = stub_symbol_with_name("reexported");
             let non_reexported_symbol = stub_symbol_with_name("non_reexported");
             let modules = vec![
-                ExternalModule {
+                Module {
                     name: String::new(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: Vec::new(),
                         references: vec![Reference::Symbol(format!(
                             "inner::{}",
@@ -392,9 +392,9 @@ mod tests {
                     is_public: true,
                     doc_comment: None,
                 },
-                ExternalModule {
+                Module {
                     name: "inner".to_string(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: vec![reexported_symbol.clone(), non_reexported_symbol.clone()],
                         references: Vec::new(),
                     },
@@ -416,9 +416,9 @@ mod tests {
         #[test]
         fn missing_reference() {
             let reference_source_code = "missing::test";
-            let modules = vec![ExternalModule {
+            let modules = vec![Module {
                 name: "outer".to_string(),
-                entry_point: Module {
+                entry_point: ModuleContents {
                     definitions: Vec::new(),
                     references: vec![Reference::Symbol(reference_source_code.to_string())],
                 },
@@ -446,9 +446,9 @@ mod tests {
                 source_code: "pub fn test() -> i32;".to_string(),
             };
             let modules = vec![
-                ExternalModule {
+                Module {
                     name: "foo".to_string(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: vec![foo_symbol.clone()],
                         references: Vec::new(),
                     },
@@ -456,9 +456,9 @@ mod tests {
                     is_public: true,
                     doc_comment: None,
                 },
-                ExternalModule {
+                Module {
                     name: "bar".to_string(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: vec![bar_symbol.clone()],
                         references: Vec::new(),
                     },
@@ -466,9 +466,9 @@ mod tests {
                     is_public: true,
                     doc_comment: None,
                 },
-                ExternalModule {
+                Module {
                     name: "reexporter1".to_string(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: Vec::new(),
                         references: vec![Reference::Symbol("foo::test".to_string())],
                     },
@@ -476,9 +476,9 @@ mod tests {
                     is_public: true,
                     doc_comment: None,
                 },
-                ExternalModule {
+                Module {
                     name: "reexporter2".to_string(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: Vec::new(),
                         references: vec![Reference::Symbol("bar::test".to_string())],
                     },
@@ -505,9 +505,9 @@ mod tests {
         fn crate_path_reference() {
             let symbol = stub_symbol();
             let modules = vec![
-                ExternalModule {
+                Module {
                     name: String::new(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: Vec::new(),
                         references: vec![Reference::Symbol("crate::inner::test".to_string())],
                     },
@@ -515,9 +515,9 @@ mod tests {
                     is_public: true,
                     doc_comment: None,
                 },
-                ExternalModule {
+                Module {
                     name: "inner".to_string(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: vec![symbol.clone()],
                         references: Vec::new(),
                     },
@@ -535,9 +535,9 @@ mod tests {
 
         #[test]
         fn super_path_from_root() {
-            let modules = vec![ExternalModule {
+            let modules = vec![Module {
                 name: String::new(),
-                entry_point: Module {
+                entry_point: ModuleContents {
                     definitions: Vec::new(),
                     references: vec![Reference::Symbol("super::test".to_string())],
                 },
@@ -558,9 +558,9 @@ mod tests {
         fn super_path_from_child() {
             let symbol = stub_symbol();
             let modules = vec![
-                ExternalModule {
+                Module {
                     name: "".to_string(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: vec![symbol.clone()],
                         references: Vec::new(),
                     },
@@ -568,9 +568,9 @@ mod tests {
                     is_public: true,
                     doc_comment: None,
                 },
-                ExternalModule {
+                Module {
                     name: "child".to_string(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: Vec::new(),
                         references: vec![Reference::Symbol("super::test".to_string())],
                     },
@@ -590,9 +590,9 @@ mod tests {
         fn super_path_from_grandchild() {
             let symbol = stub_symbol();
             let modules = vec![
-                ExternalModule {
+                Module {
                     name: "parent".to_string(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: vec![symbol.clone()],
                         references: Vec::new(),
                     },
@@ -600,9 +600,9 @@ mod tests {
                     is_public: true,
                     doc_comment: None,
                 },
-                ExternalModule {
+                Module {
                     name: "parent::child".to_string(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: Vec::new(),
                         references: vec![Reference::Symbol("super::test".to_string())],
                     },
@@ -625,9 +625,9 @@ mod tests {
         fn self_path_from_root() {
             let symbol = stub_symbol();
             let modules = vec![
-                ExternalModule {
+                Module {
                     name: "".to_string(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: Vec::new(),
                         references: vec![Reference::Symbol("self::child::test".to_string())],
                     },
@@ -635,9 +635,9 @@ mod tests {
                     is_public: true,
                     doc_comment: None,
                 },
-                ExternalModule {
+                Module {
                     name: "child".to_string(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: vec![symbol.clone()],
                         references: Vec::new(),
                     },
@@ -657,9 +657,9 @@ mod tests {
         fn self_path_from_child() {
             let symbol = stub_symbol();
             let modules = vec![
-                ExternalModule {
+                Module {
                     name: "module".to_string(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: Vec::new(),
                         references: vec![Reference::Symbol("self::inner::test".to_string())],
                     },
@@ -667,9 +667,9 @@ mod tests {
                     is_public: true,
                     doc_comment: None,
                 },
-                ExternalModule {
+                Module {
                     name: "module::inner".to_string(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: vec![symbol.clone()],
                         references: Vec::new(),
                     },
@@ -693,9 +693,9 @@ mod tests {
             let symbol1 = stub_symbol_with_name("one");
             let symbol2 = stub_symbol_with_name("two");
             let modules = vec![
-                ExternalModule {
+                Module {
                     name: String::new(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: Vec::new(),
                         references: vec![Reference::Wildcard("inner".to_string())],
                     },
@@ -703,9 +703,9 @@ mod tests {
                     is_public: true,
                     doc_comment: None,
                 },
-                ExternalModule {
+                Module {
                     name: "inner".to_string(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: vec![symbol1.clone(), symbol2.clone()],
                         references: Vec::new(),
                     },
@@ -726,9 +726,9 @@ mod tests {
         fn aliased_reexport() {
             let original_symbol = stub_symbol_with_name("test");
             let modules = vec![
-                ExternalModule {
+                Module {
                     name: String::new(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: Vec::new(),
                         references: vec![Reference::AliasedSymbol {
                             source_path: "inner::test".to_string(),
@@ -739,9 +739,9 @@ mod tests {
                     is_public: true,
                     doc_comment: None,
                 },
-                ExternalModule {
+                Module {
                     name: "inner".to_string(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: vec![original_symbol],
                         references: Vec::new(),
                     },
@@ -769,9 +769,9 @@ mod tests {
         fn aliased_reexport_from_submodule() {
             let original_symbol = stub_symbol_with_name("test");
             let modules = vec![
-                ExternalModule {
+                Module {
                     name: "reexporter".to_string(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: Vec::new(),
                         references: vec![Reference::AliasedSymbol {
                             source_path: "inner::test".to_string(),
@@ -782,9 +782,9 @@ mod tests {
                     is_public: true,
                     doc_comment: None,
                 },
-                ExternalModule {
+                Module {
                     name: "inner".to_string(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: vec![original_symbol],
                         references: Vec::new(),
                     },
@@ -815,9 +815,9 @@ mod tests {
             let symbol3 = stub_symbol_with_name("Three");
             let symbol4 = stub_symbol_with_name("Four");
             let modules = vec![
-                ExternalModule {
+                Module {
                     name: String::new(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: Vec::new(),
                         references: vec![Reference::Wildcard("submodule1".to_string())],
                     },
@@ -825,9 +825,9 @@ mod tests {
                     is_public: true,
                     doc_comment: None,
                 },
-                ExternalModule {
+                Module {
                     name: "submodule1".to_string(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: vec![symbol1.clone(), symbol2.clone()],
                         references: vec![Reference::Wildcard("submodule2".to_string())],
                     },
@@ -835,9 +835,9 @@ mod tests {
                     is_public: false,
                     doc_comment: None,
                 },
-                ExternalModule {
+                Module {
                     name: "submodule2".to_string(),
-                    entry_point: Module {
+                    entry_point: ModuleContents {
                         definitions: vec![symbol3.clone(), symbol4.clone()],
                         references: Vec::new(),
                     },
@@ -874,9 +874,9 @@ mod tests {
 
         #[test]
         fn namespace_without_doc_comment() {
-            let modules = vec![ExternalModule {
+            let modules = vec![Module {
                 name: "text".to_string(),
-                entry_point: Module {
+                entry_point: ModuleContents {
                     definitions: vec![],
                     references: vec![],
                 },
@@ -892,9 +892,9 @@ mod tests {
 
         #[test]
         fn namespace_with_doc_comment() {
-            let modules = vec![ExternalModule {
+            let modules = vec![Module {
                 name: "text".to_string(),
-                entry_point: Module {
+                entry_point: ModuleContents {
                     definitions: vec![],
                     references: vec![],
                 },
