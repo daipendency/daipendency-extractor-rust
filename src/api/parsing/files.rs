@@ -16,9 +16,9 @@ pub enum RustSymbol {
         content: Vec<RustSymbol>,
         doc_comment: Option<String>,
     },
-    ModuleDeclaration {
+    ModuleImport {
         name: String,
-        is_public: bool,
+        is_reexported: bool,
     },
     SymbolReexport {
         source_path: String,
@@ -76,7 +76,7 @@ impl RustFile {
         symbols.iter().find(|s| match s {
             RustSymbol::Symbol { symbol } => symbol.name == symbol_name,
             RustSymbol::Module { name, .. } => name == symbol_name,
-            RustSymbol::ModuleDeclaration { name, .. } => name == symbol_name,
+            RustSymbol::ModuleImport { name, .. } => name == symbol_name,
             RustSymbol::SymbolReexport { source_path, .. } => {
                 source_path.split("::").last().unwrap() == symbol_name
             }

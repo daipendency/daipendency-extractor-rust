@@ -86,9 +86,9 @@ fn extract_symbols_from_module(
                     }
                 } else {
                     // This is a module declaration (`mod foo;`)
-                    symbols.push(RustSymbol::ModuleDeclaration {
+                    symbols.push(RustSymbol::ModuleImport {
                         name: inner_mod_name,
-                        is_public,
+                        is_reexported: is_public,
                     });
                 }
             }
@@ -269,7 +269,7 @@ pub mod other;
             let module_declaration = rust_file.get_symbol("other").unwrap();
             assert!(matches!(
                 module_declaration,
-                RustSymbol::ModuleDeclaration { .. }
+                RustSymbol::ModuleImport { .. }
             ));
         }
     }

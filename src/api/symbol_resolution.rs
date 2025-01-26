@@ -46,7 +46,7 @@ fn resolve_public_symbols(
 
     // Collect all symbol definitions and references
     for module in all_modules {
-        for symbol in &module.definitions {
+        for symbol in &module.entry_point.definitions {
             let symbol_path = get_symbol_path(&symbol.name, module);
             resolved_symbols.insert(
                 symbol_path.clone(),
@@ -57,7 +57,7 @@ fn resolve_public_symbols(
             );
         }
 
-        for reference in &module.references {
+        for reference in &module.entry_point.references {
             match reference {
                 Reference::Symbol(source_path) => {
                     let normalised_path = normalise_reference(source_path, &module.name)?;
@@ -72,6 +72,7 @@ fn resolve_public_symbols(
 
                     if let Some(referenced_module) = referenced_module {
                         referenced_module
+                            .entry_point
                             .definitions
                             .iter()
                             .map(|symbol| {
@@ -83,6 +84,9 @@ fn resolve_public_symbols(
                             })
                             .for_each(drop);
                     }
+
+                    // If the referenced module is not found, we skip it assuming it's a dependency:
+                    // https://github.com/daipendency/daipendency-extractor-rust/issues/3
                 }
                 Reference::AliasedSymbol {
                     source_path: source,
@@ -199,6 +203,7 @@ fn get_doc_comments_by_module(public_modules: &[Module]) -> HashMap<String, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::symbol_collection::ModuleFile;
     use assertables::*;
 
     impl SymbolResolution {
@@ -221,8 +226,11 @@ mod tests {
             let symbol = stub_symbol();
             let modules = vec![Module {
                 name: String::new(),
-                definitions: vec![symbol.clone()],
-                references: Vec::new(),
+                entry_point: ModuleFile {
+                    definitions: vec![symbol.clone()],
+                    references: Vec::new(),
+                },
+                internal_files: HashMap::new(),
                 is_public: true,
                 doc_comment: None,
             }];
@@ -238,8 +246,11 @@ mod tests {
             let symbol = stub_symbol();
             let modules = vec![Module {
                 name: "outer::inner".to_string(),
-                definitions: vec![symbol.clone()],
-                references: Vec::new(),
+                entry_point: ModuleFile {
+                    definitions: vec![symbol.clone()],
+                    references: Vec::new(),
+                },
+                internal_files: HashMap::new(),
                 is_public: true,
                 doc_comment: None,
             }];
@@ -265,15 +276,21 @@ mod tests {
             let modules = vec![
                 Module {
                     name: String::new(),
-                    definitions: Vec::new(),
-                    references: vec![Reference::Symbol("inner::test".to_string())],
+                    entry_point: ModuleFile {
+                        definitions: Vec::new(),
+                        references: vec![Reference::Symbol("inner::test".to_string())],
+                    },
+                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
                 },
                 Module {
                     name: "inner".to_string(),
-                    definitions: vec![symbol.clone()],
-                    references: Vec::new(),
+                    entry_point: ModuleFile {
+                        definitions: vec![symbol.clone()],
+                        references: Vec::new(),
+                    },
+                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
                 },
@@ -294,15 +311,21 @@ mod tests {
             let modules = vec![
                 Module {
                     name: String::new(),
-                    definitions: Vec::new(),
-                    references: vec![Reference::Symbol("inner::test".to_string())],
+                    entry_point: ModuleFile {
+                        definitions: Vec::new(),
+                        references: vec![Reference::Symbol("inner::test".to_string())],
+                    },
+                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
                 },
                 Module {
                     name: "inner".to_string(),
-                    definitions: vec![symbol.clone()],
-                    references: Vec::new(),
+                    entry_point: ModuleFile {
+                        definitions: vec![symbol.clone()],
+                        references: Vec::new(),
+                    },
+                    internal_files: HashMap::new(),
                     is_public: false,
                     doc_comment: None,
                 },
@@ -320,15 +343,21 @@ mod tests {
             let modules = vec![
                 Module {
                     name: "foo::bar".to_string(),
-                    definitions: Vec::new(),
-                    references: vec![Reference::Symbol("outer::inner::test".to_string())],
+                    entry_point: ModuleFile {
+                        definitions: Vec::new(),
+                        references: vec![Reference::Symbol("outer::inner::test".to_string())],
+                    },
+                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
                 },
                 Module {
                     name: "outer::inner".to_string(),
-                    definitions: vec![symbol.clone()],
-                    references: Vec::new(),
+                    entry_point: ModuleFile {
+                        definitions: vec![symbol.clone()],
+                        references: Vec::new(),
+                    },
+                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
                 },
@@ -350,18 +379,24 @@ mod tests {
             let modules = vec![
                 Module {
                     name: String::new(),
-                    definitions: Vec::new(),
-                    references: vec![Reference::Symbol(format!(
-                        "inner::{}",
-                        reexported_symbol.name
-                    ))],
+                    entry_point: ModuleFile {
+                        definitions: Vec::new(),
+                        references: vec![Reference::Symbol(format!(
+                            "inner::{}",
+                            reexported_symbol.name
+                        ))],
+                    },
+                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
                 },
                 Module {
                     name: "inner".to_string(),
-                    definitions: vec![reexported_symbol.clone(), non_reexported_symbol.clone()],
-                    references: Vec::new(),
+                    entry_point: ModuleFile {
+                        definitions: vec![reexported_symbol.clone(), non_reexported_symbol.clone()],
+                        references: Vec::new(),
+                    },
+                    internal_files: HashMap::new(),
                     is_public: false,
                     doc_comment: None,
                 },
@@ -381,8 +416,11 @@ mod tests {
             let reference_source_code = "missing::test";
             let modules = vec![Module {
                 name: "outer".to_string(),
-                definitions: Vec::new(),
-                references: vec![Reference::Symbol(reference_source_code.to_string())],
+                entry_point: ModuleFile {
+                    definitions: Vec::new(),
+                    references: vec![Reference::Symbol(reference_source_code.to_string())],
+                },
+                internal_files: HashMap::new(),
                 is_public: true,
                 doc_comment: None,
             }];
@@ -408,29 +446,41 @@ mod tests {
             let modules = vec![
                 Module {
                     name: "foo".to_string(),
-                    definitions: vec![foo_symbol.clone()],
-                    references: Vec::new(),
+                    entry_point: ModuleFile {
+                        definitions: vec![foo_symbol.clone()],
+                        references: Vec::new(),
+                    },
+                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
                 },
                 Module {
                     name: "bar".to_string(),
-                    definitions: vec![bar_symbol.clone()],
-                    references: Vec::new(),
+                    entry_point: ModuleFile {
+                        definitions: vec![bar_symbol.clone()],
+                        references: Vec::new(),
+                    },
+                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
                 },
                 Module {
                     name: "reexporter1".to_string(),
-                    definitions: Vec::new(),
-                    references: vec![Reference::Symbol("foo::test".to_string())],
+                    entry_point: ModuleFile {
+                        definitions: Vec::new(),
+                        references: vec![Reference::Symbol("foo::test".to_string())],
+                    },
+                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
                 },
                 Module {
                     name: "reexporter2".to_string(),
-                    definitions: Vec::new(),
-                    references: vec![Reference::Symbol("bar::test".to_string())],
+                    entry_point: ModuleFile {
+                        definitions: Vec::new(),
+                        references: vec![Reference::Symbol("bar::test".to_string())],
+                    },
+                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
                 },
@@ -455,15 +505,21 @@ mod tests {
             let modules = vec![
                 Module {
                     name: String::new(),
-                    definitions: Vec::new(),
-                    references: vec![Reference::Symbol("crate::inner::test".to_string())],
+                    entry_point: ModuleFile {
+                        definitions: Vec::new(),
+                        references: vec![Reference::Symbol("crate::inner::test".to_string())],
+                    },
+                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
                 },
                 Module {
                     name: "inner".to_string(),
-                    definitions: vec![symbol.clone()],
-                    references: Vec::new(),
+                    entry_point: ModuleFile {
+                        definitions: vec![symbol.clone()],
+                        references: Vec::new(),
+                    },
+                    internal_files: HashMap::new(),
                     is_public: false,
                     doc_comment: None,
                 },
@@ -479,8 +535,11 @@ mod tests {
         fn super_path_from_root() {
             let modules = vec![Module {
                 name: String::new(),
-                definitions: Vec::new(),
-                references: vec![Reference::Symbol("super::test".to_string())],
+                entry_point: ModuleFile {
+                    definitions: Vec::new(),
+                    references: vec![Reference::Symbol("super::test".to_string())],
+                },
+                internal_files: HashMap::new(),
                 is_public: true,
                 doc_comment: None,
             }];
@@ -499,15 +558,21 @@ mod tests {
             let modules = vec![
                 Module {
                     name: "".to_string(),
-                    definitions: vec![symbol.clone()],
-                    references: Vec::new(),
+                    entry_point: ModuleFile {
+                        definitions: vec![symbol.clone()],
+                        references: Vec::new(),
+                    },
+                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
                 },
                 Module {
                     name: "child".to_string(),
-                    definitions: Vec::new(),
-                    references: vec![Reference::Symbol("super::test".to_string())],
+                    entry_point: ModuleFile {
+                        definitions: Vec::new(),
+                        references: vec![Reference::Symbol("super::test".to_string())],
+                    },
+                    internal_files: HashMap::new(),
                     is_public: false,
                     doc_comment: None,
                 },
@@ -525,15 +590,21 @@ mod tests {
             let modules = vec![
                 Module {
                     name: "parent".to_string(),
-                    definitions: vec![symbol.clone()],
-                    references: Vec::new(),
+                    entry_point: ModuleFile {
+                        definitions: vec![symbol.clone()],
+                        references: Vec::new(),
+                    },
+                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
                 },
                 Module {
                     name: "parent::child".to_string(),
-                    definitions: Vec::new(),
-                    references: vec![Reference::Symbol("super::test".to_string())],
+                    entry_point: ModuleFile {
+                        definitions: Vec::new(),
+                        references: vec![Reference::Symbol("super::test".to_string())],
+                    },
+                    internal_files: HashMap::new(),
                     is_public: false,
                     doc_comment: None,
                 },
@@ -554,15 +625,21 @@ mod tests {
             let modules = vec![
                 Module {
                     name: "".to_string(),
-                    definitions: Vec::new(),
-                    references: vec![Reference::Symbol("self::child::test".to_string())],
+                    entry_point: ModuleFile {
+                        definitions: Vec::new(),
+                        references: vec![Reference::Symbol("self::child::test".to_string())],
+                    },
+                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
                 },
                 Module {
                     name: "child".to_string(),
-                    definitions: vec![symbol.clone()],
-                    references: Vec::new(),
+                    entry_point: ModuleFile {
+                        definitions: vec![symbol.clone()],
+                        references: Vec::new(),
+                    },
+                    internal_files: HashMap::new(),
                     is_public: false,
                     doc_comment: None,
                 },
@@ -580,15 +657,21 @@ mod tests {
             let modules = vec![
                 Module {
                     name: "module".to_string(),
-                    definitions: Vec::new(),
-                    references: vec![Reference::Symbol("self::inner::test".to_string())],
+                    entry_point: ModuleFile {
+                        definitions: Vec::new(),
+                        references: vec![Reference::Symbol("self::inner::test".to_string())],
+                    },
+                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
                 },
                 Module {
                     name: "module::inner".to_string(),
-                    definitions: vec![symbol.clone()],
-                    references: Vec::new(),
+                    entry_point: ModuleFile {
+                        definitions: vec![symbol.clone()],
+                        references: Vec::new(),
+                    },
+                    internal_files: HashMap::new(),
                     is_public: false,
                     doc_comment: None,
                 },
@@ -610,15 +693,21 @@ mod tests {
             let modules = vec![
                 Module {
                     name: String::new(),
-                    definitions: Vec::new(),
-                    references: vec![Reference::Wildcard("inner".to_string())],
+                    entry_point: ModuleFile {
+                        definitions: Vec::new(),
+                        references: vec![Reference::Wildcard("inner".to_string())],
+                    },
+                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
                 },
                 Module {
                     name: "inner".to_string(),
-                    definitions: vec![symbol1.clone(), symbol2.clone()],
-                    references: Vec::new(),
+                    entry_point: ModuleFile {
+                        definitions: vec![symbol1.clone(), symbol2.clone()],
+                        references: Vec::new(),
+                    },
+                    internal_files: HashMap::new(),
                     is_public: false,
                     doc_comment: None,
                 },
@@ -637,18 +726,24 @@ mod tests {
             let modules = vec![
                 Module {
                     name: String::new(),
-                    definitions: Vec::new(),
-                    references: vec![Reference::AliasedSymbol {
-                        source_path: "inner::test".to_string(),
-                        alias: "aliased_test".to_string(),
-                    }],
+                    entry_point: ModuleFile {
+                        definitions: Vec::new(),
+                        references: vec![Reference::AliasedSymbol {
+                            source_path: "inner::test".to_string(),
+                            alias: "aliased_test".to_string(),
+                        }],
+                    },
+                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
                 },
                 Module {
                     name: "inner".to_string(),
-                    definitions: vec![original_symbol],
-                    references: Vec::new(),
+                    entry_point: ModuleFile {
+                        definitions: vec![original_symbol],
+                        references: Vec::new(),
+                    },
+                    internal_files: HashMap::new(),
                     is_public: false,
                     doc_comment: None,
                 },
@@ -674,18 +769,24 @@ mod tests {
             let modules = vec![
                 Module {
                     name: "reexporter".to_string(),
-                    definitions: Vec::new(),
-                    references: vec![Reference::AliasedSymbol {
-                        source_path: "inner::test".to_string(),
-                        alias: "aliased_test".to_string(),
-                    }],
+                    entry_point: ModuleFile {
+                        definitions: Vec::new(),
+                        references: vec![Reference::AliasedSymbol {
+                            source_path: "inner::test".to_string(),
+                            alias: "aliased_test".to_string(),
+                        }],
+                    },
+                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
                 },
                 Module {
                     name: "inner".to_string(),
-                    definitions: vec![original_symbol],
-                    references: Vec::new(),
+                    entry_point: ModuleFile {
+                        definitions: vec![original_symbol],
+                        references: Vec::new(),
+                    },
+                    internal_files: HashMap::new(),
                     is_public: false,
                     doc_comment: None,
                 },
@@ -704,6 +805,70 @@ mod tests {
             );
             assert_set_eq!(resolved_symbol.modules, vec!["reexporter".to_string()]);
         }
+
+        #[test]
+        fn nested_wildcard_reexport() {
+            let symbol1 = stub_symbol_with_name("One");
+            let symbol2 = stub_symbol_with_name("Two");
+            let symbol3 = stub_symbol_with_name("Three");
+            let symbol4 = stub_symbol_with_name("Four");
+            let modules = vec![
+                Module {
+                    name: String::new(),
+                    entry_point: ModuleFile {
+                        definitions: Vec::new(),
+                        references: vec![Reference::Wildcard("submodule1".to_string())],
+                    },
+                    internal_files: HashMap::new(),
+                    is_public: true,
+                    doc_comment: None,
+                },
+                Module {
+                    name: "submodule1".to_string(),
+                    entry_point: ModuleFile {
+                        definitions: vec![symbol1.clone(), symbol2.clone()],
+                        references: vec![Reference::Wildcard("submodule2".to_string())],
+                    },
+                    internal_files: HashMap::new(),
+                    is_public: false,
+                    doc_comment: None,
+                },
+                Module {
+                    name: "submodule2".to_string(),
+                    entry_point: ModuleFile {
+                        definitions: vec![symbol3.clone(), symbol4.clone()],
+                        references: Vec::new(),
+                    },
+                    internal_files: HashMap::new(),
+                    is_public: false,
+                    doc_comment: None,
+                },
+            ];
+
+            let resolution = resolve_symbols(&modules).unwrap();
+
+            assert_eq!(
+                resolution.symbols.len(),
+                4,
+                "Expected 4 symbols to be resolved"
+            );
+            assert_set_eq!(
+                resolution.get_symbol_modules(symbol1.clone()),
+                vec![String::new()]
+            );
+            assert_set_eq!(
+                resolution.get_symbol_modules(symbol2.clone()),
+                vec![String::new()]
+            );
+            assert_set_eq!(
+                resolution.get_symbol_modules(symbol3.clone()),
+                vec![String::new()]
+            );
+            assert_set_eq!(
+                resolution.get_symbol_modules(symbol4.clone()),
+                vec![String::new()]
+            );
+        }
     }
 
     mod doc_comments {
@@ -713,8 +878,11 @@ mod tests {
         fn namespace_without_doc_comment() {
             let modules = vec![Module {
                 name: "text".to_string(),
-                definitions: vec![],
-                references: vec![],
+                entry_point: ModuleFile {
+                    definitions: vec![],
+                    references: vec![],
+                },
+                internal_files: HashMap::new(),
                 is_public: true,
                 doc_comment: None,
             }];
@@ -728,8 +896,11 @@ mod tests {
         fn namespace_with_doc_comment() {
             let modules = vec![Module {
                 name: "text".to_string(),
-                definitions: vec![],
-                references: vec![],
+                entry_point: ModuleFile {
+                    definitions: vec![],
+                    references: vec![],
+                },
+                internal_files: HashMap::new(),
                 is_public: true,
                 doc_comment: Some("Module for text processing".to_string()),
             }];

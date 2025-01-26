@@ -94,19 +94,28 @@ pub enum Format {
     fn wildcard_reexport() {
         let temp_dir = create_temp_dir();
         let lib_rs = temp_dir.path().join("src").join("lib.rs");
-        let module_rs = temp_dir.path().join("src").join("module.rs");
+        let submodule1_rs = temp_dir.path().join("src").join("submodule1.rs");
+        let submodule2_rs = temp_dir.path().join("src").join("submodule2.rs");
         create_file(
             &lib_rs,
             r#"
-mod module;
-pub use module::*;
+mod submodule1;
+pub use submodule1::*;
 "#,
         );
         create_file(
-            &module_rs,
+            &submodule1_rs,
             r#"
 pub struct One;
 pub struct Two;
+pub use submodule2::*;
+"#,
+        );
+        create_file(
+            &submodule2_rs,
+            r#"
+pub struct Three;
+pub struct Four;
 "#,
         );
         let mut parser = setup_parser();
@@ -115,8 +124,10 @@ pub struct Two;
 
         assert_eq!(namespaces.len(), 1);
         let root = &namespaces[0];
-        assert_eq!(root.symbols.len(), 2);
+        assert_eq!(root.symbols.len(), 4);
         assert!(root.get_symbol("One").is_some());
         assert!(root.get_symbol("Two").is_some());
+        assert!(root.get_symbol("Three").is_some());
+        assert!(root.get_symbol("Four").is_some());
     }
 }

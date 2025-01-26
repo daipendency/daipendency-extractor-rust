@@ -7,10 +7,22 @@ use tree_sitter::Parser;
 use super::parsing;
 
 #[derive(Debug, Clone)]
-pub struct Module {
-    pub name: String,
+pub struct ModuleFile {
     pub definitions: Vec<Symbol>,
     pub references: Vec<Reference>,
+}
+
+/// A module is a collection of symbols and references.
+///
+/// It can represent:
+/// - A crate's root, where `src/lib.rs` is the entry point and other files in `src/*.rs` are internal.
+/// - A submodule, where `src/submodule/mod.rs` is the entry point and other files in `src/submodule/*.rs` are internal.
+/// - A `mod submodule {...}` block, where the entry point is the contents of the block (symbol declarations and reexports), and there are no internal files.
+#[derive(Debug, Clone)]
+pub struct Module {
+    pub name: String,
+    pub entry_point: ModuleFile,
+    pub internal_files: HashMap<String, ModuleFile>,
     pub is_public: bool,
     pub doc_comment: Option<String>,
 }
@@ -78,8 +90,11 @@ fn collect_module_symbols(
     let mut modules = Vec::new();
     let mut current_namespace = Module {
         name: namespace_prefix.to_string(),
-        definitions: Vec::new(),
-        references: Vec::new(),
+        entry_point: ModuleFile {
+            definitions: Vec::new(),
+            references: Vec::new(),
+        },
+        internal_files: HashMap::new(),
         is_public,
         doc_comment,
     };
@@ -87,7 +102,10 @@ fn collect_module_symbols(
     for symbol in content {
         match symbol {
             parsing::RustSymbol::Symbol { symbol } => {
-                current_namespace.definitions.push(symbol.clone());
+                current_namespace
+                    .entry_point
+                    .definitions
+                    .push(symbol.clone());
             }
             parsing::RustSymbol::Module {
                 name,
@@ -106,21 +124,40 @@ fn collect_module_symbols(
                 )?;
                 modules.append(&mut nested_modules);
             }
-            parsing::RustSymbol::ModuleDeclaration {
+            parsing::RustSymbol::ModuleImport {
                 name,
-                is_public: module_is_public,
+                is_reexported: module_is_public,
                 ..
             } => {
                 if let Ok(module_path) = resolve_module_path(file_path, &name) {
-                    let module_namespace = prefix_namespace(&name, namespace_prefix);
-                    let mut child_namespaces = collect_symbols_recursively(
-                        &module_path,
-                        &module_namespace,
-                        module_is_public,
-                        parser,
-                        visited_files,
-                    )?;
-                    modules.append(&mut child_namespaces);
+                    // Check if this is a submodule (in a subdirectory) or a sibling file
+                    let parent_path = file_path.parent().unwrap();
+                    let submodule_path = parent_path.join(&name).join("mod.rs");
+                    let is_submodule = module_path == submodule_path;
+                    if is_submodule {
+                        let module_namespace = prefix_namespace(&name, namespace_prefix);
+                        let mut child_namespaces = collect_symbols_recursively(
+                            &module_path,
+                            &module_namespace,
+                            module_is_public,
+                            parser,
+                            visited_files,
+                        )?;
+                        modules.append(&mut child_namespaces);
+                    } else {
+                        let mut child_namespaces = collect_symbols_recursively(
+                            &module_path,
+                            namespace_prefix, // Keep the parent's namespace
+                            module_is_public,
+                            parser,
+                            visited_files,
+                        )?;
+                        if let Some(child) = child_namespaces.pop() {
+                            current_namespace
+                                .internal_files
+                                .insert(name.clone(), child.entry_point);
+                        }
+                    }
                 }
             }
             parsing::RustSymbol::SymbolReexport {
@@ -131,15 +168,20 @@ fn collect_module_symbols(
                 let source_path = prefix_namespace(&source_path, namespace_prefix);
                 if is_wildcard {
                     current_namespace
+                        .entry_point
                         .references
                         .push(Reference::Wildcard(source_path));
                 } else if let Some(alias_name) = alias {
-                    current_namespace.references.push(Reference::AliasedSymbol {
-                        source_path,
-                        alias: alias_name,
-                    });
+                    current_namespace
+                        .entry_point
+                        .references
+                        .push(Reference::AliasedSymbol {
+                            source_path,
+                            alias: alias_name,
+                        });
                 } else {
                     current_namespace
+                        .entry_point
                         .references
                         .push(Reference::Symbol(source_path));
                 }
@@ -246,9 +288,9 @@ pub fn public_function() {}
 
             assert_eq!(modules.len(), 1);
             assert_eq!(modules[0].name, "");
-            assert_eq!(modules[0].definitions.len(), 1);
+            assert_eq!(modules[0].entry_point.definitions.len(), 1);
 
-            let definitions = &modules[0].definitions;
+            let definitions = &modules[0].entry_point.definitions;
             assert!(definitions.iter().any(|s| s.name == "public_function"));
         }
 
@@ -268,7 +310,7 @@ fn private_function() {}
 
             assert_eq!(modules.len(), 1);
             assert_eq!(modules[0].name, "");
-            assert_eq!(modules[0].definitions.len(), 0);
+            assert_eq!(modules[0].entry_point.definitions.len(), 0);
         }
 
         #[test]
@@ -329,7 +371,7 @@ mod private_module {}
 
             assert_eq!(modules.len(), 1);
             assert_eq!(modules[0].name, "");
-            assert_eq!(modules[0].references.len(), 0);
+            assert_eq!(modules[0].entry_point.references.len(), 0);
         }
 
         #[test]
@@ -341,33 +383,28 @@ mod private_module {}
             create_file(
                 &lib_rs,
                 r#"
-    pub mod module;
-    pub use module::InnerStruct;
-    "#,
+pub mod module;
+"#,
             );
             create_file(
                 &module_rs,
                 r#"
-    pub struct InnerStruct;
-    "#,
+pub struct InnerStruct;
+"#,
             );
 
             let mut parser = setup_parser();
             let modules = collect_symbols(&lib_rs, &mut parser).unwrap();
 
-            assert_eq!(modules.len(), 2);
+            assert_eq!(modules.len(), 1);
             let root = get_module("", &modules).unwrap();
-            assert_eq!(root.definitions.len(), 0);
-            assert_eq!(root.references.len(), 1);
-            assert_eq!(
-                root.references[0],
-                Reference::Symbol("module::InnerStruct".to_string())
-            );
+            assert_eq!(root.entry_point.definitions.len(), 0);
+            assert_eq!(root.entry_point.references.len(), 0);
 
-            let module = get_module("module", &modules).unwrap();
-            assert_eq!(module.definitions.len(), 1);
-            assert_eq!(module.references.len(), 0);
-            assert_eq!(module.definitions[0].name, "InnerStruct");
+            let module_file = root.internal_files.get("module").unwrap();
+            assert_eq!(module_file.definitions.len(), 1);
+            assert_eq!(module_file.references.len(), 0);
+            assert_eq!(module_file.definitions[0].name, "InnerStruct");
         }
 
         #[test]
@@ -378,34 +415,38 @@ mod private_module {}
             create_file(
                 &lib_rs,
                 r#"
-    mod formatter;
-    pub use formatter::Format;
-    "#,
+mod formatter;
+pub use formatter::Format;
+"#,
             );
             create_file(
                 &formatter_rs,
                 r#"
-    pub enum Format {
-        Plain,
-        Rich,
-    }
-    "#,
+pub enum Format {
+    Plain,
+    Rich,
+}
+"#,
             );
             let mut parser = setup_parser();
 
             let modules = collect_symbols(&lib_rs, &mut parser).unwrap();
 
-            let formatter = get_module("formatter", &modules).unwrap();
-            assert_eq!(formatter.definitions.len(), 1);
-            assert!(formatter.definitions.iter().any(|s| s.name == "Format"));
-            assert!(!formatter.is_public);
-            // But its symbols should be reexported in the text module
-            let text = get_module("", &modules).unwrap();
-            assert_eq!(text.references.len(), 1);
-            assert!(text
-                .references
+            assert_eq!(modules.len(), 1);
+            let root = get_module("", &modules).unwrap();
+            assert_eq!(root.entry_point.definitions.len(), 0);
+            assert_eq!(root.entry_point.references.len(), 1);
+            assert_eq!(
+                root.entry_point.references[0],
+                Reference::Symbol("formatter::Format".to_string())
+            );
+
+            let formatter_file = root.internal_files.get("formatter").unwrap();
+            assert_eq!(formatter_file.definitions.len(), 1);
+            assert!(formatter_file
+                .definitions
                 .iter()
-                .any(|path| path == &Reference::Symbol("formatter::Format".to_string())));
+                .any(|s| s.name == "Format"));
         }
 
         #[test]
@@ -415,7 +456,6 @@ mod private_module {}
             let formatting_dir = temp_dir.path().join("src").join("formatting");
             let formatting_mod_rs = formatting_dir.join("mod.rs");
             let format_rs = formatting_dir.join("format.rs");
-
             create_file(
                 &lib_rs,
                 r#"
@@ -440,31 +480,31 @@ mod private_module {}
     }
     "#,
             );
-
             let mut parser = setup_parser();
+
             let modules = collect_symbols(&lib_rs, &mut parser).unwrap();
 
-            assert_eq!(modules.len(), 3);
+            assert_eq!(modules.len(), 2,);
             let root = get_module("", &modules).unwrap();
-            assert_eq!(root.definitions.len(), 0);
-            assert_eq!(root.references.len(), 1);
+            assert_eq!(root.entry_point.definitions.len(), 0,);
+            assert_eq!(root.entry_point.references.len(), 1,);
             assert_eq!(
-                root.references[0],
-                Reference::Symbol("formatting::Format".to_string())
+                root.entry_point.references[0],
+                Reference::Symbol("formatting::Format".to_string()),
             );
 
             let formatting = get_module("formatting", &modules).unwrap();
-            assert_eq!(formatting.definitions.len(), 0);
-            assert_eq!(formatting.references.len(), 1);
+            assert_eq!(formatting.entry_point.definitions.len(), 0,);
+            assert_eq!(formatting.entry_point.references.len(), 1,);
             assert_eq!(
-                formatting.references[0],
-                Reference::Symbol("formatting::format::Format".to_string())
+                formatting.entry_point.references[0],
+                Reference::Symbol("formatting::format::Format".to_string()),
             );
 
-            let format = get_module("formatting::format", &modules).unwrap();
-            assert_eq!(format.definitions.len(), 1);
-            assert_eq!(format.references.len(), 0);
-            assert_eq!(format.definitions[0].name, "Format");
+            let format_file = formatting.internal_files.get("format").unwrap();
+            assert_eq!(format_file.definitions.len(), 1,);
+            assert_eq!(format_file.references.len(), 0,);
+            assert_eq!(format_file.definitions[0].name, "Format");
         }
 
         #[test]
@@ -489,8 +529,12 @@ pub mod child {
             let modules = collect_symbols(&lib_rs, &mut parser).unwrap();
 
             let grandchild = get_module("child::grandchild", &modules).unwrap();
-            assert_eq!(grandchild.definitions.len(), 1);
-            let enum_definition = grandchild.definitions.iter().find(|s| s.name == "Format");
+            assert_eq!(grandchild.entry_point.definitions.len(), 1);
+            let enum_definition = grandchild
+                .entry_point
+                .definitions
+                .iter()
+                .find(|s| s.name == "Format");
             assert!(enum_definition.is_some());
         }
 
@@ -517,14 +561,57 @@ pub mod child {
             let mut parser = setup_parser();
             let modules = collect_symbols(&lib_rs, &mut parser).unwrap();
 
-            assert_eq!(modules.len(), 2);
+            assert_eq!(modules.len(), 1);
             let root = get_module("", &modules).unwrap();
-            assert_eq!(root.definitions.len(), 0);
-            assert_eq!(root.references.len(), 1);
+            assert_eq!(root.entry_point.definitions.len(), 0);
+            assert_eq!(root.entry_point.references.len(), 1);
             assert_eq!(
-                root.references[0],
+                root.entry_point.references[0],
                 Reference::Wildcard("module".to_string())
             );
+
+            let module_file = root.internal_files.get("module").unwrap();
+            assert_eq!(module_file.definitions.len(), 1);
+            assert_eq!(module_file.references.len(), 0);
+            assert_eq!(module_file.definitions[0].name, "InnerStruct");
+        }
+
+        #[test]
+        fn file_with_mod_in_name() {
+            let temp_dir = create_temp_dir();
+            let lib_rs = temp_dir.path().join("src").join("lib.rs");
+            let my_mod_rs = temp_dir.path().join("src").join("my_mod.rs");
+
+            create_file(
+                &lib_rs,
+                r#"
+    mod my_mod;
+    pub use my_mod::MyStruct;
+    "#,
+            );
+            create_file(
+                &my_mod_rs,
+                r#"
+    pub struct MyStruct;
+    "#,
+            );
+
+            let mut parser = setup_parser();
+            let modules = collect_symbols(&lib_rs, &mut parser).unwrap();
+
+            assert_eq!(modules.len(), 1);
+            let root = get_module("", &modules).unwrap();
+            assert_eq!(root.entry_point.definitions.len(), 0);
+            assert_eq!(root.entry_point.references.len(), 1);
+            assert_eq!(
+                root.entry_point.references[0],
+                Reference::Symbol("my_mod::MyStruct".to_string())
+            );
+
+            let my_mod_file = root.internal_files.get("my_mod").unwrap();
+            assert_eq!(my_mod_file.definitions.len(), 1);
+            assert_eq!(my_mod_file.references.len(), 0);
+            assert_eq!(my_mod_file.definitions[0].name, "MyStruct");
         }
 
         #[test]
@@ -550,21 +637,22 @@ pub mod child {
             let mut parser = setup_parser();
             let modules = collect_symbols(&lib_rs, &mut parser).unwrap();
 
-            assert_eq!(modules.len(), 2);
+            assert_eq!(modules.len(), 1);
             let root = get_module("", &modules).unwrap();
-            assert_eq!(root.definitions.len(), 0);
-            assert_eq!(root.references.len(), 1);
+            assert_eq!(root.entry_point.definitions.len(), 0);
+            assert_eq!(root.entry_point.references.len(), 1);
             assert_eq!(
-                root.references[0],
+                root.entry_point.references[0],
                 Reference::AliasedSymbol {
                     source_path: "submodule::Foo".to_string(),
                     alias: "Bar".to_string(),
                 }
             );
-            let submodule = get_module("submodule", &modules).unwrap();
-            assert_eq!(submodule.definitions.len(), 1);
-            assert_eq!(submodule.references.len(), 0);
-            assert_eq!(submodule.definitions[0].name, "Foo");
+
+            let submodule_file = root.internal_files.get("submodule").unwrap();
+            assert_eq!(submodule_file.definitions.len(), 1);
+            assert_eq!(submodule_file.references.len(), 0);
+            assert_eq!(submodule_file.definitions[0].name, "Foo");
         }
     }
 
