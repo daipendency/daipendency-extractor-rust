@@ -166,27 +166,65 @@ fn resolve_references(
     references_by_symbol_path: HashMap<String, Vec<String>>,
     public_module_paths: &HashSet<String>,
 ) {
-    for (source_path, referencing_modules) in &references_by_symbol_path {
-        if let Some(resolved) = resolved_symbols.get_mut(source_path) {
-            let mut new_modules = resolved.modules.clone();
-            new_modules.extend(referencing_modules.iter().cloned());
-            let new_modules_set: HashSet<_> = new_modules.into_iter().collect();
-            resolved.modules = new_modules_set
-                .intersection(public_module_paths)
-                .cloned()
-                .collect();
-        } else {
-            // The symbol can't be found in the codebase, so it's likely to be a dependency
-            let symbol_name = source_path.split("::").last().unwrap();
-            let resolved_symbol = ResolvedSymbol {
-                symbol: Symbol {
-                    name: symbol_name.to_string(),
-                    source_code: format!("pub use {};", source_path),
-                },
-                modules: referencing_modules.clone(),
-            };
-            resolved_symbols.insert(source_path.to_string(), resolved_symbol);
+    // First pass: collect all references that need resolving
+    let to_resolve: Vec<(String, Vec<String>)> = references_by_symbol_path.into_iter().collect();
+    let mut resolved_count = 0;
+    
+    // Keep resolving until we can't resolve any more references
+    while resolved_count < to_resolve.len() {
+        let mut new_resolved_count = resolved_count;
+        
+        for i in resolved_count..to_resolve.len() {
+            let (source_path, referencing_modules) = &to_resolve[i];
+            
+            // Try to find the symbol directly
+            if let Some(resolved) = resolved_symbols.get_mut(source_path) {
+                let mut new_modules = resolved.modules.clone();
+                new_modules.extend(referencing_modules.iter().cloned());
+                let new_modules_set: HashSet<_> = new_modules.into_iter().collect();
+                resolved.modules = new_modules_set
+                    .intersection(public_module_paths)
+                    .cloned()
+                    .collect();
+                new_resolved_count += 1;
+                continue;
+            }
+            
+            // Try to find the symbol through the reference chain
+            let mut found = false;
+            for (other_path, other_symbol) in resolved_symbols.iter() {
+                if other_path.ends_with(&format!("::{}", source_path.split("::").last().unwrap())) {
+                    let resolved_symbol = ResolvedSymbol {
+                        symbol: other_symbol.symbol.clone(),
+                        modules: referencing_modules.clone(),
+                    };
+                    resolved_symbols.insert(source_path.clone(), resolved_symbol);
+                    found = true;
+                    new_resolved_count += 1;
+                    break;
+                }
+            }
+            
+            if !found {
+                // The symbol can't be found in the codebase, so it's likely to be a dependency
+                let symbol_name = source_path.split("::").last().unwrap();
+                let resolved_symbol = ResolvedSymbol {
+                    symbol: Symbol {
+                        name: symbol_name.to_string(),
+                        source_code: format!("pub use {};", source_path),
+                    },
+                    modules: referencing_modules.clone(),
+                };
+                resolved_symbols.insert(source_path.clone(), resolved_symbol);
+                new_resolved_count += 1;
+            }
         }
+        
+        if new_resolved_count == resolved_count {
+            // We couldn't resolve any more references, break to avoid infinite loop
+            break;
+        }
+        resolved_count = new_resolved_count;
     }
 }
 
