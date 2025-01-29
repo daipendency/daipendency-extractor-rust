@@ -17,11 +17,18 @@ pub struct SymbolResolution {
     pub doc_comments: HashMap<String, String>,
 }
 
+#[derive(Debug)]
+struct SymbolReference {
+    source_path: String,
+    referencing_module: String,
+    import_type: ImportType,
+}
+
 /// Resolve symbol references by matching them with their corresponding definitions.
 pub fn resolve_symbols(all_modules: &[Module]) -> Result<SymbolResolution, ExtractionError> {
-    let public_symbols = resolve_public_symbols(&all_modules)?;
+    let public_symbols = resolve_public_symbols(all_modules)?;
 
-    let doc_comments = get_doc_comments_by_module(&all_modules);
+    let doc_comments = get_doc_comments_by_module(all_modules);
 
     Ok(SymbolResolution {
         symbols: public_symbols,
@@ -30,8 +37,7 @@ pub fn resolve_symbols(all_modules: &[Module]) -> Result<SymbolResolution, Extra
 }
 
 fn resolve_public_symbols(all_modules: &[Module]) -> Result<Vec<ResolvedSymbol>, ExtractionError> {
-    let (mut resolved_symbols, references_by_symbol_path) =
-        collect_symbols_and_references(all_modules)?;
+    let (mut resolved_symbols, references) = collect_symbols_and_references(all_modules)?;
 
     let public_module_paths: HashSet<String> = all_modules
         .iter()
@@ -41,7 +47,8 @@ fn resolve_public_symbols(all_modules: &[Module]) -> Result<Vec<ResolvedSymbol>,
 
     resolve_references(
         &mut resolved_symbols,
-        references_by_symbol_path,
+        references,
+        all_modules,
         &public_module_paths,
     );
 
@@ -61,15 +68,10 @@ fn resolve_public_symbols(all_modules: &[Module]) -> Result<Vec<ResolvedSymbol>,
 
 fn collect_symbols_and_references(
     all_modules: &[Module],
-) -> Result<
-    (
-        HashMap<String, ResolvedSymbol>,
-        HashMap<String, Vec<String>>,
-    ),
-    ExtractionError,
-> {
+) -> Result<(HashMap<String, ResolvedSymbol>, Vec<SymbolReference>), ExtractionError> {
     let mut resolved_symbols: HashMap<String, ResolvedSymbol> = HashMap::new();
-    let mut references_by_symbol_path: HashMap<String, Vec<String>> = HashMap::new();
+    let mut references: Vec<SymbolReference> = Vec::new();
+
     for module in all_modules {
         for symbol in &module.symbols {
             match symbol {
@@ -86,145 +88,190 @@ fn collect_symbols_and_references(
                 ModuleItem::SymbolReexport {
                     source_path,
                     import_type,
-                } => match import_type {
-                    ImportType::Simple => {
-                        let normalised_path = normalise_reference(source_path, &module.name)?;
-                        references_by_symbol_path
-                            .entry(normalised_path)
-                            .or_default()
-                            .push(module.name.clone());
-                    }
-                    ImportType::Wildcard => {
-                        let normalised_path = normalise_reference(source_path, &module.name)?;
-                        let referenced_module =
-                            all_modules.iter().find(|m| m.name == normalised_path);
-
-                        // If the referenced module is not found, we skip it assuming it's a dependency:
-                        // https://github.com/daipendency/daipendency-extractor-rust/issues/3
-                        if let Some(referenced_module) = referenced_module {
-                            referenced_module
-                                .symbols
-                                .iter()
-                                .filter_map(|s| {
-                                    if let ModuleItem::Symbol { symbol } = s {
-                                        Some(symbol)
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .map(|symbol| {
-                                    let symbol_path =
-                                        get_symbol_path(&symbol.name, referenced_module);
-                                    references_by_symbol_path
-                                        .entry(symbol_path)
-                                        .or_default()
-                                        .push(module.name.clone());
-                                })
-                                .for_each(drop);
-                        }
-                    }
-                    ImportType::Aliased(alias) => {
-                        let normalised_path = normalise_reference(source_path, &module.name)?;
-
-                        // For aliased imports, add both the importing module and the defining module
-                        let defining_module = normalised_path
-                            .rfind("::")
-                            .map_or("", |i| &normalised_path[..i]);
-
-                        // Add reference to the original symbol
-                        let refs = references_by_symbol_path
-                            .entry(normalised_path.to_string())
-                            .or_default();
-                        refs.push(module.name.clone());
-                        if !defining_module.is_empty() {
-                            refs.push(defining_module.to_string());
-                        }
-
-                        // Create new symbol for the alias
-                        let alias_path = get_symbol_path(&alias, module);
-                        let symbol = Symbol {
-                            name: alias.clone(),
-                            source_code: format!("pub use {} as {};", normalised_path, alias),
-                        };
-                        resolved_symbols.insert(
-                            alias_path,
-                            ResolvedSymbol {
-                                symbol,
-                                modules: vec![module.name.clone()],
-                            },
-                        );
-                    }
-                },
+                } => {
+                    let normalised_path = normalise_reference(source_path, &module.name)?;
+                    references.push(SymbolReference {
+                        source_path: normalised_path,
+                        referencing_module: module.name.clone(),
+                        import_type: import_type.clone(),
+                    });
+                }
             }
         }
     }
-    Ok((resolved_symbols, references_by_symbol_path))
+    Ok((resolved_symbols, references))
 }
 
 fn resolve_references(
     resolved_symbols: &mut HashMap<String, ResolvedSymbol>,
-    references_by_symbol_path: HashMap<String, Vec<String>>,
+    references: Vec<SymbolReference>,
+    all_modules: &[Module],
     public_module_paths: &HashSet<String>,
 ) {
-    // First pass: collect all references that need resolving
-    let to_resolve: Vec<(String, Vec<String>)> = references_by_symbol_path.into_iter().collect();
     let mut resolved_count = 0;
-    
-    // Keep resolving until we can't resolve any more references
-    while resolved_count < to_resolve.len() {
+    let mut pending_references = references;
+
+    while resolved_count < pending_references.len() {
         let mut new_resolved_count = resolved_count;
-        
-        for i in resolved_count..to_resolve.len() {
-            let (source_path, referencing_modules) = &to_resolve[i];
-            
-            // Try to find the symbol directly
-            if let Some(resolved) = resolved_symbols.get_mut(source_path) {
-                let mut new_modules = resolved.modules.clone();
-                new_modules.extend(referencing_modules.iter().cloned());
-                let new_modules_set: HashSet<_> = new_modules.into_iter().collect();
-                resolved.modules = new_modules_set
-                    .intersection(public_module_paths)
-                    .cloned()
-                    .collect();
-                new_resolved_count += 1;
-                continue;
-            }
-            
-            // Try to find the symbol through the reference chain
-            let mut found = false;
-            for (other_path, other_symbol) in resolved_symbols.iter() {
-                if other_path.ends_with(&format!("::{}", source_path.split("::").last().unwrap())) {
-                    let resolved_symbol = ResolvedSymbol {
-                        symbol: other_symbol.symbol.clone(),
-                        modules: referencing_modules.clone(),
+        let mut new_references = Vec::new();
+
+        for i in resolved_count..pending_references.len() {
+            let reference = &pending_references[i];
+
+            match &reference.import_type {
+                ImportType::Simple => {
+                    if let Some(resolved) = resolved_symbols.get_mut(&reference.source_path) {
+                        let mut new_modules = resolved.modules.clone();
+                        new_modules.push(reference.referencing_module.clone());
+                        let new_modules_set: HashSet<_> = new_modules.into_iter().collect();
+                        resolved.modules = new_modules_set.into_iter().collect();
+                        new_resolved_count += 1;
+                    } else {
+                        // Try to find through reference chain or create as external
+                        let mut found = false;
+                        for (other_path, other_symbol) in resolved_symbols.iter() {
+                            if other_path.ends_with(&format!(
+                                "::{}",
+                                reference.source_path.split("::").last().unwrap()
+                            )) {
+                                let resolved_symbol = ResolvedSymbol {
+                                    symbol: other_symbol.symbol.clone(),
+                                    modules: vec![reference.referencing_module.clone()],
+                                };
+                                resolved_symbols
+                                    .insert(reference.source_path.clone(), resolved_symbol);
+                                found = true;
+                                new_resolved_count += 1;
+                                break;
+                            }
+                        }
+
+                        if !found {
+                            let symbol_name = reference.source_path.split("::").last().unwrap();
+                            let resolved_symbol = ResolvedSymbol {
+                                symbol: Symbol {
+                                    name: symbol_name.to_string(),
+                                    source_code: format!("pub use {};", reference.source_path),
+                                },
+                                modules: vec![reference.referencing_module.clone()],
+                            };
+                            resolved_symbols.insert(reference.source_path.clone(), resolved_symbol);
+                            new_resolved_count += 1;
+                        }
+                    }
+                }
+                ImportType::Aliased(alias) => {
+                    // Add reference to the original symbol
+                    if let Some(resolved) = resolved_symbols.get_mut(&reference.source_path) {
+                        let mut new_modules = resolved.modules.clone();
+                        new_modules.push(reference.referencing_module.clone());
+                        let new_modules_set: HashSet<_> = new_modules.into_iter().collect();
+                        resolved.modules = new_modules_set.into_iter().collect();
+                    }
+
+                    // Create new symbol for the alias
+                    let alias_path = if reference.referencing_module.is_empty() {
+                        alias.clone()
+                    } else {
+                        format!("{}::{}", reference.referencing_module, alias)
                     };
-                    resolved_symbols.insert(source_path.clone(), resolved_symbol);
-                    found = true;
+                    let symbol = Symbol {
+                        name: alias.clone(),
+                        source_code: format!("pub use {} as {};", reference.source_path, alias),
+                    };
+                    resolved_symbols.insert(
+                        alias_path,
+                        ResolvedSymbol {
+                            symbol,
+                            modules: vec![reference.referencing_module.clone()],
+                        },
+                    );
                     new_resolved_count += 1;
-                    break;
+                }
+                ImportType::Wildcard => {
+                    let module_path = get_wildcard_module_path(
+                        &reference.source_path,
+                        &reference.referencing_module,
+                    );
+                    if let Some(referenced_module) =
+                        all_modules.iter().find(|m| m.name == module_path)
+                    {
+                        // Add the referencing module to all symbols in resolved_symbols that are from this module or its submodules
+                        for (symbol_path, resolved) in resolved_symbols.iter_mut() {
+                            if symbol_path.starts_with(&referenced_module.name) {
+                                let mut new_modules = resolved.modules.clone();
+                                new_modules.push(reference.referencing_module.clone());
+                                let new_modules_set: HashSet<_> = new_modules.into_iter().collect();
+                                resolved.modules = new_modules_set.into_iter().collect();
+                            }
+                        }
+
+                        // Process all reexports in the referenced module
+                        for symbol in referenced_module.symbols.iter() {
+                            if let ModuleItem::SymbolReexport {
+                                source_path,
+                                import_type,
+                            } = symbol
+                            {
+                                let normalised_path =
+                                    normalise_reference(source_path, &referenced_module.name)
+                                        .expect(
+                                            "Already validated in collect_symbols_and_references",
+                                        );
+                                new_references.push(SymbolReference {
+                                    source_path: normalised_path,
+                                    referencing_module: reference.referencing_module.clone(),
+                                    import_type: import_type.clone(),
+                                });
+                            }
+                        }
+                        new_resolved_count += 1;
+                    } else {
+                        // Check if we have any symbols that match this path
+                        let has_matching_symbols = resolved_symbols
+                            .keys()
+                            .any(|k| k.contains(&reference.source_path));
+                        if !has_matching_symbols {
+                            // Create a symbol for the missing module
+                            let symbol = Symbol {
+                                name: reference
+                                    .source_path
+                                    .split("::")
+                                    .last()
+                                    .unwrap_or(&reference.source_path)
+                                    .to_string(),
+                                source_code: format!("pub use {}::*;", reference.source_path),
+                            };
+                            resolved_symbols.insert(
+                                reference.source_path.clone(),
+                                ResolvedSymbol {
+                                    symbol,
+                                    modules: vec![reference.referencing_module.clone()],
+                                },
+                            );
+                        }
+                        new_resolved_count += 1;
+                    }
                 }
             }
-            
-            if !found {
-                // The symbol can't be found in the codebase, so it's likely to be a dependency
-                let symbol_name = source_path.split("::").last().unwrap();
-                let resolved_symbol = ResolvedSymbol {
-                    symbol: Symbol {
-                        name: symbol_name.to_string(),
-                        source_code: format!("pub use {};", source_path),
-                    },
-                    modules: referencing_modules.clone(),
-                };
-                resolved_symbols.insert(source_path.clone(), resolved_symbol);
-                new_resolved_count += 1;
-            }
         }
-        
-        if new_resolved_count == resolved_count {
-            // We couldn't resolve any more references, break to avoid infinite loop
+
+        if new_resolved_count == resolved_count && new_references.is_empty() {
             break;
         }
         resolved_count = new_resolved_count;
+        pending_references.extend(new_references);
+    }
+
+    // Filter out private modules from each symbol's modules list
+    for resolved in resolved_symbols.values_mut() {
+        let public_modules: Vec<_> = resolved
+            .modules
+            .iter()
+            .filter(|m| public_module_paths.contains(*m))
+            .cloned()
+            .collect();
+        resolved.modules = public_modules;
     }
 }
 
@@ -258,6 +305,17 @@ fn normalise_reference(reference: &str, current_module: &str) -> Result<String, 
         }
     } else {
         Ok(reference.to_string())
+    }
+}
+
+fn get_wildcard_module_path(module_path: &str, current_module: &str) -> String {
+    if current_module.is_empty() {
+        module_path.to_string()
+    } else if module_path.contains("::") {
+        // If the module path already contains ::, it's a full path
+        module_path.to_string()
+    } else {
+        format!("{}::{}", current_module, module_path)
     }
 }
 
@@ -432,30 +490,6 @@ mod tests {
                 resolution.get_symbol_modules(reexported_symbol),
                 vec![String::new()]
             );
-        }
-
-        #[test]
-        fn missing_reference() {
-            let reference_source_code = "missing::test";
-            let modules = vec![Module {
-                name: "outer".to_string(),
-                is_public: true,
-                doc_comment: None,
-                symbols: vec![ModuleItem::SymbolReexport {
-                    source_path: reference_source_code.to_string(),
-                    import_type: ImportType::Simple,
-                }],
-            }];
-
-            let result = resolve_symbols(&modules).unwrap();
-
-            assert_eq!(result.symbols.len(), 1);
-            let resolved_symbol = result.symbols[0].clone();
-            assert_eq!(
-                resolved_symbol.symbol.source_code,
-                format!("pub use {};", reference_source_code)
-            );
-            assert_set_eq!(resolved_symbol.modules, vec!["outer".to_string()]);
         }
 
         #[test]
@@ -725,6 +759,30 @@ mod tests {
         }
 
         #[test]
+        fn simple_missing() {
+            let reference_source_code = "missing::test";
+            let modules = vec![Module {
+                name: "outer".to_string(),
+                is_public: true,
+                doc_comment: None,
+                symbols: vec![ModuleItem::SymbolReexport {
+                    source_path: reference_source_code.to_string(),
+                    import_type: ImportType::Simple,
+                }],
+            }];
+
+            let result = resolve_symbols(&modules).unwrap();
+
+            assert_eq!(result.symbols.len(), 1);
+            let resolved_symbol = result.symbols[0].clone();
+            assert_eq!(
+                resolved_symbol.symbol.source_code,
+                format!("pub use {};", reference_source_code)
+            );
+            assert_set_eq!(resolved_symbol.modules, vec!["outer".to_string()]);
+        }
+
+        #[test]
         fn aliased_direct() {
             let original_symbol = stub_symbol_with_name("test");
             let modules = vec![
@@ -770,6 +828,31 @@ mod tests {
                 vec!["inner".to_string(), "reexporter".to_string()]
             );
             assert_set_eq!(aliased.modules, vec!["reexporter".to_string()]);
+        }
+
+        #[test]
+        fn aliased_missing() {
+            let reference_source_code = "missing::test";
+            let alias = "aliased_test";
+            let modules = vec![Module {
+                name: "outer".to_string(),
+                is_public: true,
+                doc_comment: None,
+                symbols: vec![ModuleItem::SymbolReexport {
+                    source_path: reference_source_code.to_string(),
+                    import_type: ImportType::Aliased(alias.to_string()),
+                }],
+            }];
+
+            let result = resolve_symbols(&modules).unwrap();
+
+            assert_eq!(result.symbols.len(), 1);
+            let resolved_symbol = result.symbols[0].clone();
+            assert_eq!(
+                resolved_symbol.symbol.source_code,
+                format!("pub use {} as {};", reference_source_code, alias)
+            );
+            assert_set_eq!(resolved_symbol.modules, vec!["outer".to_string()]);
         }
 
         #[test]
@@ -851,6 +934,30 @@ mod tests {
             assert_eq!(resolution.symbols.len(), 2);
             assert_set_eq!(resolution.get_symbol_modules(symbol1), vec![String::new()]);
             assert_set_eq!(resolution.get_symbol_modules(symbol2), vec![String::new()]);
+        }
+
+        #[test]
+        fn wildcard_missing() {
+            let reference_source_code = "missing";
+            let modules = vec![Module {
+                name: "outer".to_string(),
+                is_public: true,
+                doc_comment: None,
+                symbols: vec![ModuleItem::SymbolReexport {
+                    source_path: reference_source_code.to_string(),
+                    import_type: ImportType::Wildcard,
+                }],
+            }];
+
+            let result = resolve_symbols(&modules).unwrap();
+
+            assert_eq!(result.symbols.len(), 1);
+            let resolved_symbol = result.symbols[0].clone();
+            assert_eq!(
+                resolved_symbol.symbol.source_code,
+                format!("pub use {}::*;", reference_source_code)
+            );
+            assert_set_eq!(resolved_symbol.modules, vec!["outer".to_string()]);
         }
     }
 

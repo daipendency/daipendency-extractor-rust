@@ -38,31 +38,28 @@ fn recursively_collect_module_directories(
     let mut internal_files = HashMap::new();
     let mut imported_directories = Vec::new();
     for symbol in &entry_point_file.symbols {
-        match symbol {
-            RustSymbol::ModuleImport {
-                name,
-                is_reexported,
-            } => {
-                let import = categorise_module_import(entry_point_path, &name)?;
-                match import.module_type {
-                    LocalModuleType::File => {
-                        let file =
-                            parse_rust_file(&std::fs::read_to_string(&import.path)?, parser)?;
-                        internal_files.insert(name.clone(), file);
-                    }
-                    LocalModuleType::Directory => {
-                        let module_name = prefix_namespace(&name, namespace_prefix);
-                        let directories = recursively_collect_module_directories(
-                            &PathBuf::from(&import.path),
-                            *is_reexported,
-                            &module_name,
-                            parser,
-                        )?;
-                        imported_directories.extend(directories);
-                    }
+        if let RustSymbol::ModuleImport {
+            name,
+            is_reexported,
+        } = symbol
+        {
+            let import = categorise_module_import(entry_point_path, name)?;
+            match import.module_type {
+                LocalModuleType::File => {
+                    let file = parse_rust_file(&std::fs::read_to_string(&import.path)?, parser)?;
+                    internal_files.insert(name.clone(), file);
+                }
+                LocalModuleType::Directory => {
+                    let module_name = prefix_namespace(name, namespace_prefix);
+                    let directories = recursively_collect_module_directories(
+                        &PathBuf::from(&import.path),
+                        *is_reexported,
+                        &module_name,
+                        parser,
+                    )?;
+                    imported_directories.extend(directories);
                 }
             }
-            _ => {}
         }
     }
 

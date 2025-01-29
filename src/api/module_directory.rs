@@ -77,12 +77,12 @@ fn extract_modules_from_symbols(
                 doc_comment,
                 is_public,
             } => {
-                let nested_module_name = get_symbol_path(&name, &root_module);
+                let nested_module_name = get_symbol_path(name, &root_module);
                 let nested_modules = extract_modules_from_symbols(
                     &nested_module_name,
                     *is_public,
                     doc_comment.clone(),
-                    &content,
+                    content,
                     None,
                 )?;
                 submodules.extend(nested_modules);
@@ -94,7 +94,7 @@ fn extract_modules_from_symbols(
                 if let Some(internal_files) = internal_files {
                     if let Some(file) = internal_files.get(name) {
                         let internal_file_modules = extract_modules_from_symbols(
-                            &get_symbol_path(&name, &root_module),
+                            &get_symbol_path(name, &root_module),
                             *is_reexported,
                             file.doc_comment.clone(),
                             &file.symbols,
