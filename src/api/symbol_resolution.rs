@@ -2,7 +2,8 @@ use daipendency_extractor::ExtractionError;
 use daipendency_extractor::Symbol;
 use std::collections::{HashMap, HashSet};
 
-use super::symbol_collection::{Module, Reference};
+use super::module_directory::{Module, ModuleItem};
+use super::parsing::ImportType;
 
 #[derive(Debug, Clone)]
 pub struct ResolvedSymbol {
@@ -17,21 +18,10 @@ pub struct SymbolResolution {
 }
 
 /// Resolve symbol references by matching them with their corresponding definitions.
-pub fn resolve_symbols(
-    all_modules: &[Module],
-) -> Result<SymbolResolution, ExtractionError> {
-    let public_modules: Vec<Module> = all_modules
-        .iter()
-        .filter(|m| m.name.is_empty() || m.is_public)
-        .cloned()
-        .collect();
+pub fn resolve_symbols(all_modules: &[Module]) -> Result<SymbolResolution, ExtractionError> {
+    let public_symbols = resolve_public_symbols(&all_modules)?;
 
-    let public_symbols = match resolve_public_symbols(all_modules, &public_modules) {
-        Ok(value) => value,
-        Err(err) => return Err(err),
-    };
-
-    let doc_comments = get_doc_comments_by_module(&public_modules);
+    let doc_comments = get_doc_comments_by_module(&all_modules);
 
     Ok(SymbolResolution {
         symbols: public_symbols,
@@ -39,93 +29,150 @@ pub fn resolve_symbols(
     })
 }
 
-fn resolve_public_symbols(
+fn resolve_public_symbols(all_modules: &[Module]) -> Result<Vec<ResolvedSymbol>, ExtractionError> {
+    let (mut resolved_symbols, references_by_symbol_path) =
+        collect_symbols_and_references(all_modules)?;
+
+    let public_module_paths: HashSet<String> = all_modules
+        .iter()
+        .filter(|m| m.is_public)
+        .map(|m| m.name.clone())
+        .collect();
+
+    resolve_references(
+        &mut resolved_symbols,
+        references_by_symbol_path,
+        &public_module_paths,
+    );
+
+    let public_symbols: Vec<ResolvedSymbol> = resolved_symbols
+        .into_values()
+        .filter(|symbol| {
+            let symbol_modules: HashSet<_> = symbol.modules.iter().cloned().collect();
+            symbol_modules
+                .intersection(&public_module_paths)
+                .next()
+                .is_some()
+        })
+        .collect();
+
+    Ok(public_symbols)
+}
+
+fn collect_symbols_and_references(
     all_modules: &[Module],
-    public_modules: &[Module],
-) -> Result<Vec<ResolvedSymbol>, ExtractionError> {
+) -> Result<
+    (
+        HashMap<String, ResolvedSymbol>,
+        HashMap<String, Vec<String>>,
+    ),
+    ExtractionError,
+> {
     let mut resolved_symbols: HashMap<String, ResolvedSymbol> = HashMap::new();
     let mut references_by_symbol_path: HashMap<String, Vec<String>> = HashMap::new();
-
-    // Collect all symbol definitions and references
     for module in all_modules {
-        for symbol in &module.entry_point.definitions {
-            let symbol_path = get_symbol_path(&symbol.name, module);
-            resolved_symbols.insert(
-                symbol_path.clone(),
-                ResolvedSymbol {
-                    symbol: symbol.clone(),
-                    modules: vec![module.name.clone()],
-                },
-            );
-        }
-
-        for reference in &module.entry_point.references {
-            match reference {
-                Reference::Symbol(source_path) => {
-                    let normalised_path = normalise_reference(source_path, &module.name)?;
-                    references_by_symbol_path
-                        .entry(normalised_path)
-                        .or_default()
-                        .push(module.name.clone());
-                }
-                Reference::Wildcard(module_path) => {
-                    let normalised_path = normalise_reference(module_path, &module.name)?;
-                    let referenced_module = all_modules.iter().find(|m| m.name == normalised_path);
-
-                    if let Some(referenced_module) = referenced_module {
-                        referenced_module
-                            .entry_point
-                            .definitions
-                            .iter()
-                            .map(|symbol| {
-                                let symbol_path = get_symbol_path(&symbol.name, referenced_module);
-                                references_by_symbol_path
-                                    .entry(symbol_path)
-                                    .or_default()
-                                    .push(module.name.clone());
-                            })
-                            .for_each(drop);
-                    }
-
-                    // If the referenced module is not found, we skip it assuming it's a dependency:
-                    // https://github.com/daipendency/daipendency-extractor-rust/issues/3
-                }
-                Reference::AliasedSymbol {
-                    source_path: source,
-                    alias,
-                } => {
-                    let normalised_path = normalise_reference(source, &module.name)?;
-                    let symbol = Symbol {
-                        name: alias.clone(),
-                        source_code: format!("pub use {} as {};", normalised_path, alias),
-                    };
-                    let alias_path = if module.name.is_empty() {
-                        alias.clone()
-                    } else {
-                        format!("{}::{}", module.name, alias)
-                    };
+        for symbol in &module.symbols {
+            match symbol {
+                ModuleItem::Symbol { symbol } => {
+                    let symbol_path = get_symbol_path(&symbol.name, module);
                     resolved_symbols.insert(
-                        alias_path,
+                        symbol_path.clone(),
                         ResolvedSymbol {
-                            symbol,
+                            symbol: symbol.clone(),
                             modules: vec![module.name.clone()],
                         },
                     );
                 }
+                ModuleItem::SymbolReexport {
+                    source_path,
+                    import_type,
+                } => match import_type {
+                    ImportType::Simple => {
+                        let normalised_path = normalise_reference(source_path, &module.name)?;
+                        references_by_symbol_path
+                            .entry(normalised_path)
+                            .or_default()
+                            .push(module.name.clone());
+                    }
+                    ImportType::Wildcard => {
+                        let normalised_path = normalise_reference(source_path, &module.name)?;
+                        let referenced_module =
+                            all_modules.iter().find(|m| m.name == normalised_path);
+
+                        // If the referenced module is not found, we skip it assuming it's a dependency:
+                        // https://github.com/daipendency/daipendency-extractor-rust/issues/3
+                        if let Some(referenced_module) = referenced_module {
+                            referenced_module
+                                .symbols
+                                .iter()
+                                .filter_map(|s| {
+                                    if let ModuleItem::Symbol { symbol } = s {
+                                        Some(symbol)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .map(|symbol| {
+                                    let symbol_path =
+                                        get_symbol_path(&symbol.name, referenced_module);
+                                    references_by_symbol_path
+                                        .entry(symbol_path)
+                                        .or_default()
+                                        .push(module.name.clone());
+                                })
+                                .for_each(drop);
+                        }
+                    }
+                    ImportType::Aliased(alias) => {
+                        let normalised_path = normalise_reference(source_path, &module.name)?;
+
+                        // For aliased imports, add both the importing module and the defining module
+                        let defining_module = normalised_path
+                            .rfind("::")
+                            .map_or("", |i| &normalised_path[..i]);
+
+                        // Add reference to the original symbol
+                        let refs = references_by_symbol_path
+                            .entry(normalised_path.to_string())
+                            .or_default();
+                        refs.push(module.name.clone());
+                        if !defining_module.is_empty() {
+                            refs.push(defining_module.to_string());
+                        }
+
+                        // Create new symbol for the alias
+                        let alias_path = get_symbol_path(&alias, module);
+                        let symbol = Symbol {
+                            name: alias.clone(),
+                            source_code: format!("pub use {} as {};", normalised_path, alias),
+                        };
+                        resolved_symbols.insert(
+                            alias_path,
+                            ResolvedSymbol {
+                                symbol,
+                                modules: vec![module.name.clone()],
+                            },
+                        );
+                    }
+                },
             }
         }
     }
+    Ok((resolved_symbols, references_by_symbol_path))
+}
 
-    // Resolve reexports in public modules
-    let public_module_paths: HashSet<String> =
-        public_modules.iter().map(|m| m.name.clone()).collect();
+fn resolve_references(
+    resolved_symbols: &mut HashMap<String, ResolvedSymbol>,
+    references_by_symbol_path: HashMap<String, Vec<String>>,
+    public_module_paths: &HashSet<String>,
+) {
     for (source_path, referencing_modules) in &references_by_symbol_path {
         if let Some(resolved) = resolved_symbols.get_mut(source_path) {
             let mut new_modules = resolved.modules.clone();
             new_modules.extend(referencing_modules.iter().cloned());
             let new_modules_set: HashSet<_> = new_modules.into_iter().collect();
             resolved.modules = new_modules_set
-                .intersection(&public_module_paths)
+                .intersection(public_module_paths)
                 .cloned()
                 .collect();
         } else {
@@ -141,19 +188,6 @@ fn resolve_public_symbols(
             resolved_symbols.insert(source_path.to_string(), resolved_symbol);
         }
     }
-
-    let public_symbols: Vec<ResolvedSymbol> = resolved_symbols
-        .into_values()
-        .filter(|symbol| {
-            let symbol_modules: HashSet<_> = symbol.modules.iter().cloned().collect();
-            symbol_modules
-                .intersection(&public_module_paths)
-                .next()
-                .is_some()
-        })
-        .collect();
-
-    Ok(public_symbols)
 }
 
 fn get_symbol_path(symbol_name: &str, module: &Module) -> String {
@@ -205,7 +239,6 @@ fn get_doc_comments_by_module(public_modules: &[Module]) -> HashMap<String, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::symbol_collection::ModuleContents;
     use assertables::*;
 
     impl SymbolResolution {
@@ -213,7 +246,7 @@ mod tests {
             self.symbols
                 .iter()
                 .find(|s| s.symbol == symbol)
-                .expect("No matching symbol found")
+                .expect(&format!("No matching symbol found in {:?}", self.symbols))
                 .modules
                 .clone()
         }
@@ -228,13 +261,11 @@ mod tests {
             let symbol = stub_symbol();
             let modules = vec![Module {
                 name: String::new(),
-                entry_point: ModuleContents {
-                    definitions: vec![symbol.clone()],
-                    references: Vec::new(),
-                },
-                internal_files: HashMap::new(),
                 is_public: true,
                 doc_comment: None,
+                symbols: vec![ModuleItem::Symbol {
+                    symbol: symbol.clone(),
+                }],
             }];
 
             let resolution = resolve_symbols(&modules).unwrap();
@@ -248,13 +279,11 @@ mod tests {
             let symbol = stub_symbol();
             let modules = vec![Module {
                 name: "outer::inner".to_string(),
-                entry_point: ModuleContents {
-                    definitions: vec![symbol.clone()],
-                    references: Vec::new(),
-                },
-                internal_files: HashMap::new(),
                 is_public: true,
                 doc_comment: None,
+                symbols: vec![ModuleItem::Symbol {
+                    symbol: symbol.clone(),
+                }],
             }];
 
             let resolution = resolve_symbols(&modules).unwrap();
@@ -268,68 +297,29 @@ mod tests {
     }
 
     mod reexports {
+        use super::*;
         use crate::test_helpers::{stub_symbol, stub_symbol_with_name};
 
-        use super::*;
-
         #[test]
-        fn via_public_module() {
+        fn module_via_submodule() {
             let symbol = stub_symbol();
             let modules = vec![
                 Module {
                     name: String::new(),
-                    entry_point: ModuleContents {
-                        definitions: Vec::new(),
-                        references: vec![Reference::Symbol("inner::test".to_string())],
-                    },
-                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
+                    symbols: vec![ModuleItem::SymbolReexport {
+                        source_path: "module::test".to_string(),
+                        import_type: ImportType::Simple,
+                    }],
                 },
                 Module {
-                    name: "inner".to_string(),
-                    entry_point: ModuleContents {
-                        definitions: vec![symbol.clone()],
-                        references: Vec::new(),
-                    },
-                    internal_files: HashMap::new(),
-                    is_public: true,
-                    doc_comment: None,
-                },
-            ];
-
-            let resolution = resolve_symbols(&modules).unwrap();
-
-            assert_eq!(resolution.symbols.len(), 1);
-            assert_set_eq!(
-                resolution.get_symbol_modules(symbol),
-                vec![String::new(), "inner".to_string()]
-            );
-        }
-
-        #[test]
-        fn via_private_module() {
-            let symbol = stub_symbol();
-            let modules = vec![
-                Module {
-                    name: String::new(),
-                    entry_point: ModuleContents {
-                        definitions: Vec::new(),
-                        references: vec![Reference::Symbol("inner::test".to_string())],
-                    },
-                    internal_files: HashMap::new(),
-                    is_public: true,
-                    doc_comment: None,
-                },
-                Module {
-                    name: "inner".to_string(),
-                    entry_point: ModuleContents {
-                        definitions: vec![symbol.clone()],
-                        references: Vec::new(),
-                    },
-                    internal_files: HashMap::new(),
+                    name: "module".to_string(),
                     is_public: false,
                     doc_comment: None,
+                    symbols: vec![ModuleItem::Symbol {
+                        symbol: symbol.clone(),
+                    }],
                 },
             ];
 
@@ -340,38 +330,32 @@ mod tests {
         }
 
         #[test]
-        fn via_nested_public_module() {
+        fn symbol_via_private_module_block() {
             let symbol = stub_symbol();
             let modules = vec![
                 Module {
-                    name: "foo::bar".to_string(),
-                    entry_point: ModuleContents {
-                        definitions: Vec::new(),
-                        references: vec![Reference::Symbol("outer::inner::test".to_string())],
-                    },
-                    internal_files: HashMap::new(),
+                    name: String::new(),
                     is_public: true,
                     doc_comment: None,
+                    symbols: vec![ModuleItem::SymbolReexport {
+                        source_path: "priv::test".to_string(),
+                        import_type: ImportType::Simple,
+                    }],
                 },
                 Module {
-                    name: "outer::inner".to_string(),
-                    entry_point: ModuleContents {
-                        definitions: vec![symbol.clone()],
-                        references: Vec::new(),
-                    },
-                    internal_files: HashMap::new(),
-                    is_public: true,
+                    name: "priv".to_string(),
+                    is_public: false,
                     doc_comment: None,
+                    symbols: vec![ModuleItem::Symbol {
+                        symbol: symbol.clone(),
+                    }],
                 },
             ];
 
             let resolution = resolve_symbols(&modules).unwrap();
 
             assert_eq!(resolution.symbols.len(), 1);
-            assert_set_eq!(
-                resolution.get_symbol_modules(symbol),
-                vec!["foo::bar".to_string(), "outer::inner".to_string()]
-            );
+            assert_set_eq!(resolution.get_symbol_modules(symbol), vec![String::new()]);
         }
 
         #[test]
@@ -381,26 +365,25 @@ mod tests {
             let modules = vec![
                 Module {
                     name: String::new(),
-                    entry_point: ModuleContents {
-                        definitions: Vec::new(),
-                        references: vec![Reference::Symbol(format!(
-                            "inner::{}",
-                            reexported_symbol.name
-                        ))],
-                    },
-                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
+                    symbols: vec![ModuleItem::SymbolReexport {
+                        source_path: format!("inner::{}", reexported_symbol.name),
+                        import_type: ImportType::Simple,
+                    }],
                 },
                 Module {
                     name: "inner".to_string(),
-                    entry_point: ModuleContents {
-                        definitions: vec![reexported_symbol.clone(), non_reexported_symbol.clone()],
-                        references: Vec::new(),
-                    },
-                    internal_files: HashMap::new(),
                     is_public: false,
                     doc_comment: None,
+                    symbols: vec![
+                        ModuleItem::Symbol {
+                            symbol: reexported_symbol.clone(),
+                        },
+                        ModuleItem::Symbol {
+                            symbol: non_reexported_symbol.clone(),
+                        },
+                    ],
                 },
             ];
 
@@ -418,13 +401,12 @@ mod tests {
             let reference_source_code = "missing::test";
             let modules = vec![Module {
                 name: "outer".to_string(),
-                entry_point: ModuleContents {
-                    definitions: Vec::new(),
-                    references: vec![Reference::Symbol(reference_source_code.to_string())],
-                },
-                internal_files: HashMap::new(),
                 is_public: true,
                 doc_comment: None,
+                symbols: vec![ModuleItem::SymbolReexport {
+                    source_path: reference_source_code.to_string(),
+                    import_type: ImportType::Simple,
+                }],
             }];
 
             let result = resolve_symbols(&modules).unwrap();
@@ -448,43 +430,37 @@ mod tests {
             let modules = vec![
                 Module {
                     name: "foo".to_string(),
-                    entry_point: ModuleContents {
-                        definitions: vec![foo_symbol.clone()],
-                        references: Vec::new(),
-                    },
-                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
+                    symbols: vec![ModuleItem::Symbol {
+                        symbol: foo_symbol.clone(),
+                    }],
                 },
                 Module {
                     name: "bar".to_string(),
-                    entry_point: ModuleContents {
-                        definitions: vec![bar_symbol.clone()],
-                        references: Vec::new(),
-                    },
-                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
+                    symbols: vec![ModuleItem::Symbol {
+                        symbol: bar_symbol.clone(),
+                    }],
                 },
                 Module {
                     name: "reexporter1".to_string(),
-                    entry_point: ModuleContents {
-                        definitions: Vec::new(),
-                        references: vec![Reference::Symbol("foo::test".to_string())],
-                    },
-                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
+                    symbols: vec![ModuleItem::SymbolReexport {
+                        source_path: "foo::test".to_string(),
+                        import_type: ImportType::Simple,
+                    }],
                 },
                 Module {
                     name: "reexporter2".to_string(),
-                    entry_point: ModuleContents {
-                        definitions: Vec::new(),
-                        references: vec![Reference::Symbol("bar::test".to_string())],
-                    },
-                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
+                    symbols: vec![ModuleItem::SymbolReexport {
+                        source_path: "bar::test".to_string(),
+                        import_type: ImportType::Simple,
+                    }],
                 },
             ];
 
@@ -507,23 +483,20 @@ mod tests {
             let modules = vec![
                 Module {
                     name: String::new(),
-                    entry_point: ModuleContents {
-                        definitions: Vec::new(),
-                        references: vec![Reference::Symbol("crate::inner::test".to_string())],
-                    },
-                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
+                    symbols: vec![ModuleItem::SymbolReexport {
+                        source_path: "crate::inner::test".to_string(),
+                        import_type: ImportType::Simple,
+                    }],
                 },
                 Module {
                     name: "inner".to_string(),
-                    entry_point: ModuleContents {
-                        definitions: vec![symbol.clone()],
-                        references: Vec::new(),
-                    },
-                    internal_files: HashMap::new(),
                     is_public: false,
                     doc_comment: None,
+                    symbols: vec![ModuleItem::Symbol {
+                        symbol: symbol.clone(),
+                    }],
                 },
             ];
 
@@ -537,13 +510,12 @@ mod tests {
         fn super_path_from_root() {
             let modules = vec![Module {
                 name: String::new(),
-                entry_point: ModuleContents {
-                    definitions: Vec::new(),
-                    references: vec![Reference::Symbol("super::test".to_string())],
-                },
-                internal_files: HashMap::new(),
                 is_public: true,
                 doc_comment: None,
+                symbols: vec![ModuleItem::SymbolReexport {
+                    source_path: "super::test".to_string(),
+                    import_type: ImportType::Simple,
+                }],
             }];
 
             let result = resolve_symbols(&modules);
@@ -560,23 +532,20 @@ mod tests {
             let modules = vec![
                 Module {
                     name: "".to_string(),
-                    entry_point: ModuleContents {
-                        definitions: vec![symbol.clone()],
-                        references: Vec::new(),
-                    },
-                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
+                    symbols: vec![ModuleItem::Symbol {
+                        symbol: symbol.clone(),
+                    }],
                 },
                 Module {
                     name: "child".to_string(),
-                    entry_point: ModuleContents {
-                        definitions: Vec::new(),
-                        references: vec![Reference::Symbol("super::test".to_string())],
-                    },
-                    internal_files: HashMap::new(),
                     is_public: false,
                     doc_comment: None,
+                    symbols: vec![ModuleItem::SymbolReexport {
+                        source_path: "super::test".to_string(),
+                        import_type: ImportType::Simple,
+                    }],
                 },
             ];
 
@@ -592,23 +561,20 @@ mod tests {
             let modules = vec![
                 Module {
                     name: "parent".to_string(),
-                    entry_point: ModuleContents {
-                        definitions: vec![symbol.clone()],
-                        references: Vec::new(),
-                    },
-                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
+                    symbols: vec![ModuleItem::Symbol {
+                        symbol: symbol.clone(),
+                    }],
                 },
                 Module {
                     name: "parent::child".to_string(),
-                    entry_point: ModuleContents {
-                        definitions: Vec::new(),
-                        references: vec![Reference::Symbol("super::test".to_string())],
-                    },
-                    internal_files: HashMap::new(),
                     is_public: false,
                     doc_comment: None,
+                    symbols: vec![ModuleItem::SymbolReexport {
+                        source_path: "super::test".to_string(),
+                        import_type: ImportType::Simple,
+                    }],
                 },
             ];
 
@@ -627,23 +593,20 @@ mod tests {
             let modules = vec![
                 Module {
                     name: "".to_string(),
-                    entry_point: ModuleContents {
-                        definitions: Vec::new(),
-                        references: vec![Reference::Symbol("self::child::test".to_string())],
-                    },
-                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
+                    symbols: vec![ModuleItem::SymbolReexport {
+                        source_path: "self::child::test".to_string(),
+                        import_type: ImportType::Simple,
+                    }],
                 },
                 Module {
                     name: "child".to_string(),
-                    entry_point: ModuleContents {
-                        definitions: vec![symbol.clone()],
-                        references: Vec::new(),
-                    },
-                    internal_files: HashMap::new(),
                     is_public: false,
                     doc_comment: None,
+                    symbols: vec![ModuleItem::Symbol {
+                        symbol: symbol.clone(),
+                    }],
                 },
             ];
 
@@ -659,23 +622,20 @@ mod tests {
             let modules = vec![
                 Module {
                     name: "module".to_string(),
-                    entry_point: ModuleContents {
-                        definitions: Vec::new(),
-                        references: vec![Reference::Symbol("self::inner::test".to_string())],
-                    },
-                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
+                    symbols: vec![ModuleItem::SymbolReexport {
+                        source_path: "self::inner::test".to_string(),
+                        import_type: ImportType::Simple,
+                    }],
                 },
                 Module {
                     name: "module::inner".to_string(),
-                    entry_point: ModuleContents {
-                        definitions: vec![symbol.clone()],
-                        references: Vec::new(),
-                    },
-                    internal_files: HashMap::new(),
                     is_public: false,
                     doc_comment: None,
+                    symbols: vec![ModuleItem::Symbol {
+                        symbol: symbol.clone(),
+                    }],
                 },
             ];
 
@@ -689,29 +649,117 @@ mod tests {
         }
 
         #[test]
-        fn wildcard_reexport() {
+        fn simple_nested() {
+            let symbol = stub_symbol_with_name("Foo");
+            let modules = vec![
+                Module {
+                    name: String::new(),
+                    is_public: true,
+                    doc_comment: None,
+                    symbols: vec![ModuleItem::SymbolReexport {
+                        source_path: "child::Foo".to_string(),
+                        import_type: ImportType::Simple,
+                    }],
+                },
+                Module {
+                    name: "child".to_string(),
+                    is_public: false,
+                    doc_comment: None,
+                    symbols: vec![ModuleItem::SymbolReexport {
+                        source_path: "grandchild::Foo".to_string(),
+                        import_type: ImportType::Simple,
+                    }],
+                },
+                Module {
+                    name: "child::grandchild".to_string(),
+                    is_public: false,
+                    doc_comment: None,
+                    symbols: vec![ModuleItem::Symbol {
+                        symbol: symbol.clone(),
+                    }],
+                },
+            ];
+
+            let resolution = resolve_symbols(&modules).unwrap();
+
+            assert_eq!(resolution.symbols.len(), 1);
+            assert_set_eq!(resolution.get_symbol_modules(symbol), vec![String::new()]);
+        }
+
+        #[test]
+        fn aliased_direct() {
+            let original_symbol = stub_symbol_with_name("test");
+            let modules = vec![
+                Module {
+                    name: "reexporter".to_string(),
+                    is_public: true,
+                    doc_comment: None,
+                    symbols: vec![ModuleItem::SymbolReexport {
+                        source_path: "inner::test".to_string(),
+                        import_type: ImportType::Aliased("aliased_test".to_string()),
+                    }],
+                },
+                Module {
+                    name: "inner".to_string(),
+                    is_public: true,
+                    doc_comment: None,
+                    symbols: vec![ModuleItem::Symbol {
+                        symbol: original_symbol.clone(),
+                    }],
+                },
+            ];
+
+            let resolution = resolve_symbols(&modules).unwrap();
+
+            assert_eq!(resolution.symbols.len(), 2);
+            let original = resolution
+                .symbols
+                .iter()
+                .find(|s| s.symbol.name == "test")
+                .unwrap();
+            let aliased = resolution
+                .symbols
+                .iter()
+                .find(|s| s.symbol.name == "aliased_test")
+                .unwrap();
+            assert_eq!(original.symbol, original_symbol);
+            assert_eq!(
+                aliased.symbol.source_code,
+                "pub use inner::test as aliased_test;"
+            );
+            assert_set_eq!(
+                original.modules,
+                vec!["inner".to_string(), "reexporter".to_string()]
+            );
+            assert_set_eq!(aliased.modules, vec!["reexporter".to_string()]);
+        }
+
+        #[test]
+        fn wildcard_direct() {
             let symbol1 = stub_symbol_with_name("one");
             let symbol2 = stub_symbol_with_name("two");
             let modules = vec![
                 Module {
                     name: String::new(),
-                    entry_point: ModuleContents {
-                        definitions: Vec::new(),
-                        references: vec![Reference::Wildcard("inner".to_string())],
-                    },
-                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
+                    symbols: vec![ModuleItem::SymbolReexport {
+                        source_path: "inner".to_string(),
+                        import_type: ImportType::Wildcard,
+                    }],
                 },
                 Module {
                     name: "inner".to_string(),
-                    entry_point: ModuleContents {
-                        definitions: vec![symbol1.clone(), symbol2.clone()],
-                        references: Vec::new(),
-                    },
-                    internal_files: HashMap::new(),
                     is_public: false,
                     doc_comment: None,
+                    symbols: vec![
+                        ModuleItem::Symbol {
+                            symbol: symbol1.clone(),
+                        },
+                        ModuleItem::Symbol {
+                            symbol: symbol2.clone(),
+                        },
+                    ],
                 },
             ];
 
@@ -723,149 +771,48 @@ mod tests {
         }
 
         #[test]
-        fn aliased_reexport() {
-            let original_symbol = stub_symbol_with_name("test");
-            let modules = vec![
-                Module {
-                    name: String::new(),
-                    entry_point: ModuleContents {
-                        definitions: Vec::new(),
-                        references: vec![Reference::AliasedSymbol {
-                            source_path: "inner::test".to_string(),
-                            alias: "aliased_test".to_string(),
-                        }],
-                    },
-                    internal_files: HashMap::new(),
-                    is_public: true,
-                    doc_comment: None,
-                },
-                Module {
-                    name: "inner".to_string(),
-                    entry_point: ModuleContents {
-                        definitions: vec![original_symbol],
-                        references: Vec::new(),
-                    },
-                    internal_files: HashMap::new(),
-                    is_public: false,
-                    doc_comment: None,
-                },
-            ];
-
-            let resolution = resolve_symbols(&modules).unwrap();
-
-            assert_eq!(resolution.symbols.len(), 1);
-            let resolved_symbol = &resolution.symbols[0];
-            assert_eq!(
-                resolved_symbol.symbol,
-                Symbol {
-                    name: "aliased_test".to_string(),
-                    source_code: "pub use inner::test as aliased_test;".to_string(),
-                }
-            );
-            assert_set_eq!(resolved_symbol.modules, vec![String::new()]);
-        }
-
-        #[test]
-        fn aliased_reexport_from_submodule() {
-            let original_symbol = stub_symbol_with_name("test");
-            let modules = vec![
-                Module {
-                    name: "reexporter".to_string(),
-                    entry_point: ModuleContents {
-                        definitions: Vec::new(),
-                        references: vec![Reference::AliasedSymbol {
-                            source_path: "inner::test".to_string(),
-                            alias: "aliased_test".to_string(),
-                        }],
-                    },
-                    internal_files: HashMap::new(),
-                    is_public: true,
-                    doc_comment: None,
-                },
-                Module {
-                    name: "inner".to_string(),
-                    entry_point: ModuleContents {
-                        definitions: vec![original_symbol],
-                        references: Vec::new(),
-                    },
-                    internal_files: HashMap::new(),
-                    is_public: false,
-                    doc_comment: None,
-                },
-            ];
-
-            let resolution = resolve_symbols(&modules).unwrap();
-
-            assert_eq!(resolution.symbols.len(), 1);
-            let resolved_symbol = &resolution.symbols[0];
-            assert_eq!(
-                resolved_symbol.symbol,
-                Symbol {
-                    name: "aliased_test".to_string(),
-                    source_code: "pub use inner::test as aliased_test;".to_string(),
-                }
-            );
-            assert_set_eq!(resolved_symbol.modules, vec!["reexporter".to_string()]);
-        }
-
-        #[test]
-        fn nested_wildcard_reexport() {
+        fn wildcard_nested() {
             let symbol1 = stub_symbol_with_name("One");
             let symbol2 = stub_symbol_with_name("Two");
-            let symbol3 = stub_symbol_with_name("Three");
-            let symbol4 = stub_symbol_with_name("Four");
             let modules = vec![
                 Module {
                     name: String::new(),
-                    entry_point: ModuleContents {
-                        definitions: Vec::new(),
-                        references: vec![Reference::Wildcard("submodule1".to_string())],
-                    },
-                    internal_files: HashMap::new(),
                     is_public: true,
                     doc_comment: None,
+                    symbols: vec![ModuleItem::SymbolReexport {
+                        source_path: "child".to_string(),
+                        import_type: ImportType::Wildcard,
+                    }],
                 },
                 Module {
-                    name: "submodule1".to_string(),
-                    entry_point: ModuleContents {
-                        definitions: vec![symbol1.clone(), symbol2.clone()],
-                        references: vec![Reference::Wildcard("submodule2".to_string())],
-                    },
-                    internal_files: HashMap::new(),
+                    name: "child".to_string(),
                     is_public: false,
                     doc_comment: None,
+                    symbols: vec![ModuleItem::SymbolReexport {
+                        source_path: "grandchild".to_string(),
+                        import_type: ImportType::Wildcard,
+                    }],
                 },
                 Module {
-                    name: "submodule2".to_string(),
-                    entry_point: ModuleContents {
-                        definitions: vec![symbol3.clone(), symbol4.clone()],
-                        references: Vec::new(),
-                    },
-                    internal_files: HashMap::new(),
+                    name: "child::grandchild".to_string(),
                     is_public: false,
                     doc_comment: None,
+                    symbols: vec![
+                        ModuleItem::Symbol {
+                            symbol: symbol1.clone(),
+                        },
+                        ModuleItem::Symbol {
+                            symbol: symbol2.clone(),
+                        },
+                    ],
                 },
             ];
 
             let resolution = resolve_symbols(&modules).unwrap();
 
-            assert_eq!(resolution.symbols.len(), 4,);
-            assert_set_eq!(
-                resolution.get_symbol_modules(symbol1.clone()),
-                vec![String::new()]
-            );
-            assert_set_eq!(
-                resolution.get_symbol_modules(symbol2.clone()),
-                vec![String::new()]
-            );
-            assert_set_eq!(
-                resolution.get_symbol_modules(symbol3.clone()),
-                vec![String::new()]
-            );
-            assert_set_eq!(
-                resolution.get_symbol_modules(symbol4.clone()),
-                vec![String::new()]
-            );
+            assert_eq!(resolution.symbols.len(), 2);
+            assert_set_eq!(resolution.get_symbol_modules(symbol1), vec![String::new()]);
+            assert_set_eq!(resolution.get_symbol_modules(symbol2), vec![String::new()]);
         }
     }
 
@@ -876,13 +823,9 @@ mod tests {
         fn namespace_without_doc_comment() {
             let modules = vec![Module {
                 name: "text".to_string(),
-                entry_point: ModuleContents {
-                    definitions: vec![],
-                    references: vec![],
-                },
-                internal_files: HashMap::new(),
                 is_public: true,
                 doc_comment: None,
+                symbols: Vec::new(),
             }];
 
             let resolution = resolve_symbols(&modules).unwrap();
@@ -894,13 +837,9 @@ mod tests {
         fn namespace_with_doc_comment() {
             let modules = vec![Module {
                 name: "text".to_string(),
-                entry_point: ModuleContents {
-                    definitions: vec![],
-                    references: vec![],
-                },
-                internal_files: HashMap::new(),
                 is_public: true,
                 doc_comment: Some("Module for text processing".to_string()),
+                symbols: Vec::new(),
             }];
 
             let resolution = resolve_symbols(&modules).unwrap();

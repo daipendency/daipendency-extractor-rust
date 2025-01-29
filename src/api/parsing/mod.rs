@@ -73,19 +73,17 @@ fn extract_symbols_from_module(
 
                 if let Some(declaration_list) = get_declaration_list(child) {
                     // This is a module block (`mod foo { ... }`)
-                    if is_public {
-                        let doc_comment =
-                            extract_inner_doc_comments(&declaration_list, source_code)?;
-                        let inner_mod_symbols =
-                            extract_symbols_from_module(declaration_list, source_code)?;
-                        symbols.push(RustSymbol::Module {
-                            name: inner_mod_name,
-                            content: inner_mod_symbols,
-                            doc_comment,
-                        });
-                    }
+                    let doc_comment = extract_inner_doc_comments(&declaration_list, source_code)?;
+                    let inner_mod_symbols =
+                        extract_symbols_from_module(declaration_list, source_code)?;
+                    symbols.push(RustSymbol::ModuleBlock {
+                        name: inner_mod_name,
+                        is_public,
+                        content: inner_mod_symbols,
+                        doc_comment,
+                    });
                 } else {
-                    // This is a module declaration (`mod foo;`)
+                    // This is a module declaration or import (`mod foo;`)
                     symbols.push(RustSymbol::ModuleImport {
                         name: inner_mod_name,
                         is_reexported: is_public,
@@ -190,6 +188,8 @@ fn private_function() {}
     }
 
     mod inner_modules {
+        use assertables::assert_matches;
+
         use super::*;
 
         #[test]
@@ -203,8 +203,16 @@ pub mod inner {
 
             let rust_file = parse_rust_file(source_code, &mut parser).unwrap();
 
-            let symbol = rust_file.get_symbol("inner::nested_function").unwrap();
-            assert!(matches!(symbol, RustSymbol::Symbol { .. }));
+            let module = rust_file.get_symbol("inner").unwrap();
+            assert_matches!(
+                module,
+                RustSymbol::ModuleBlock {
+                    is_public: true,
+                    ..
+                }
+            );
+            let function = rust_file.get_symbol("inner::nested_function").unwrap();
+            assert!(matches!(function, RustSymbol::Symbol { .. }));
         }
 
         #[test]
@@ -218,9 +226,14 @@ mod private {
 
             let rust_file = parse_rust_file(source_code, &mut parser).unwrap();
 
-            assert!(
-                rust_file.symbols.is_empty(),
-                "Private modules should be ignored"
+            assert_eq!(rust_file.symbols.len(), 1);
+            let module = rust_file.get_symbol("private").unwrap();
+            assert_matches!(
+                module,
+                RustSymbol::ModuleBlock {
+                    is_public: false,
+                    ..
+                }
             );
         }
 

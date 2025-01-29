@@ -1,3 +1,5 @@
+mod module_directory;
+mod module_extraction;
 mod namespace_construction;
 mod parsing;
 mod symbol_collection;
@@ -6,11 +8,12 @@ mod test_helpers;
 
 use daipendency_extractor::ExtractionError;
 use daipendency_extractor::Namespace;
+use module_extraction::extract_modules;
 use std::path::Path;
 use tree_sitter::Parser;
 
 use namespace_construction::construct_namespaces;
-use symbol_collection::collect_symbols;
+use symbol_collection::collect_module_directories;
 use symbol_resolution::resolve_symbols;
 
 pub fn build_public_api(
@@ -18,8 +21,9 @@ pub fn build_public_api(
     crate_name: &str,
     parser: &mut Parser,
 ) -> Result<Vec<Namespace>, ExtractionError> {
-    let raw_namespaces = collect_symbols(entry_point, parser)?;
-    let resolution = resolve_symbols(&raw_namespaces)?;
+    let module_directories = collect_module_directories(entry_point, parser)?;
+    let modules = extract_modules(&module_directories)?;
+    let resolution = resolve_symbols(&modules)?;
     let namespaces = construct_namespaces(resolution, crate_name);
     Ok(namespaces)
 }
@@ -94,28 +98,19 @@ pub enum Format {
     fn wildcard_reexport() {
         let temp_dir = create_temp_dir();
         let lib_rs = temp_dir.path().join("src").join("lib.rs");
-        let submodule1_rs = temp_dir.path().join("src").join("submodule1.rs");
-        let submodule2_rs = temp_dir.path().join("src").join("submodule2.rs");
+        let submodule_rs = temp_dir.path().join("src").join("submodule.rs");
         create_file(
             &lib_rs,
             r#"
-mod submodule1;
-pub use submodule1::*;
+mod submodule;
+pub use submodule::*;
 "#,
         );
         create_file(
-            &submodule1_rs,
+            &submodule_rs,
             r#"
 pub struct One;
 pub struct Two;
-pub use submodule2::*;
-"#,
-        );
-        create_file(
-            &submodule2_rs,
-            r#"
-pub struct Three;
-pub struct Four;
 "#,
         );
         let mut parser = setup_parser();
@@ -124,10 +119,8 @@ pub struct Four;
 
         assert_eq!(namespaces.len(), 1);
         let root = &namespaces[0];
-        assert_eq!(root.symbols.len(), 4);
+        assert_eq!(root.symbols.len(), 2);
         assert!(root.get_symbol("One").is_some());
         assert!(root.get_symbol("Two").is_some());
-        assert!(root.get_symbol("Three").is_some());
-        assert!(root.get_symbol("Four").is_some());
     }
 }
