@@ -8,7 +8,7 @@ use super::parsing::{parse_rust_file, RustSymbol};
 
 enum LocalModuleType {
     File,
-    Directory,
+    Directory(String),
 }
 
 struct LocalModuleImport {
@@ -21,11 +21,18 @@ pub fn collect_module_directories(
     entry_point: &Path,
     parser: &mut Parser,
 ) -> Result<Vec<ModuleDirectory>, ExtractionError> {
-    recursively_collect_module_directories(entry_point, true, "", parser)
+    recursively_collect_module_directories(
+        entry_point,
+        entry_point.parent().unwrap(),
+        true,
+        "",
+        parser,
+    )
 }
 
 fn recursively_collect_module_directories(
     entry_point_path: &Path,
+    directory_path: &Path,
     is_root_directory_public: bool,
     namespace_prefix: &str,
     parser: &mut Parser,
@@ -43,16 +50,17 @@ fn recursively_collect_module_directories(
             is_reexported,
         } = symbol
         {
-            let import = categorise_module_import(entry_point_path, name)?;
+            let import = categorise_module_import(entry_point_path, directory_path, name)?;
             match import.module_type {
                 LocalModuleType::File => {
                     let file = parse_rust_file(&std::fs::read_to_string(&import.path)?, parser)?;
                     internal_files.insert(name.clone(), file);
                 }
-                LocalModuleType::Directory => {
+                LocalModuleType::Directory(ref module_dir) => {
                     let module_name = prefix_namespace(name, namespace_prefix);
                     let directories = recursively_collect_module_directories(
                         &PathBuf::from(&import.path),
+                        &PathBuf::from(module_dir),
                         *is_reexported,
                         &module_name,
                         parser,
@@ -76,28 +84,33 @@ fn recursively_collect_module_directories(
 
 fn categorise_module_import(
     current_file: &Path,
+    directory_path: &Path,
     module_name: &str,
 ) -> Result<LocalModuleImport, ExtractionError> {
-    let parent = current_file.parent().ok_or_else(|| {
-        ExtractionError::Malformed(format!(
-            "Failed to get parent directory of {}",
-            current_file.display()
-        ))
-    })?;
-
-    let mod_rs_path = parent.join(module_name).join("mod.rs");
-    if mod_rs_path.exists() {
-        return Ok(LocalModuleImport {
-            path: mod_rs_path.to_string_lossy().to_string(),
-            module_type: LocalModuleType::Directory,
-        });
-    }
-
-    let rs_path = parent.join(format!("{}.rs", module_name));
+    // First check for new style module file (module.rs)
+    let rs_path = directory_path.join(format!("{}.rs", module_name));
     if rs_path.exists() {
+        // Check if this is a directory module (has submodules)
+        let module_dir = directory_path.join(module_name);
+        if module_dir.is_dir() {
+            return Ok(LocalModuleImport {
+                path: rs_path.to_string_lossy().to_string(),
+                module_type: LocalModuleType::Directory(module_dir.to_string_lossy().to_string()),
+            });
+        }
         return Ok(LocalModuleImport {
             path: rs_path.to_string_lossy().to_string(),
             module_type: LocalModuleType::File,
+        });
+    }
+
+    // Then check for old style module directory (module/mod.rs)
+    let mod_rs_path = directory_path.join(module_name).join("mod.rs");
+    if mod_rs_path.exists() {
+        let module_dir = directory_path.join(module_name);
+        return Ok(LocalModuleImport {
+            path: mod_rs_path.to_string_lossy().to_string(),
+            module_type: LocalModuleType::Directory(module_dir.to_string_lossy().to_string()),
         });
     }
 
@@ -666,6 +679,65 @@ pub mod inner {
                 &root.entry_point.symbols[0],
                 RustSymbol::ModuleBlock { name, is_public: true, doc_comment, .. }
                 if name == "inner" && *doc_comment == Some("//! This is the inner doc comment\n".to_string())
+            );
+        }
+    }
+
+    mod nested_module_directories {
+        use super::*;
+        use crate::api::test_helpers::get_module_directory;
+
+        #[test]
+        fn old_style() {
+            let temp_dir = create_temp_dir();
+            let src_dir = temp_dir.path().join("src");
+            let lib_rs = src_dir.join("lib.rs");
+            let module_dir = src_dir.join("module");
+            let mod_rs = module_dir.join("mod.rs");
+            let submodule_rs = module_dir.join("submodule.rs");
+            create_file(&lib_rs, r#"mod module;"#);
+            create_file(&mod_rs, r#"mod submodule;"#);
+            create_file(&submodule_rs, r#"pub struct SubStruct;"#);
+            let mut parser = setup_parser();
+
+            let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
+
+            assert_eq!(directories.len(), 2);
+            assert!(get_module_directory("", &directories).is_some());
+            let module = get_module_directory("module", &directories).unwrap();
+            assert!(module.internal_files.contains_key("submodule"));
+            let submodule = module.internal_files.get("submodule").unwrap();
+            assert_eq!(submodule.symbols.len(), 1);
+            assert_matches!(
+                &submodule.symbols[0],
+                RustSymbol::Symbol { symbol } if symbol.name == "SubStruct"
+            );
+        }
+
+        #[test]
+        fn new_style() {
+            let temp_dir = create_temp_dir();
+            let src_dir = temp_dir.path().join("src");
+            let lib_rs = src_dir.join("lib.rs");
+            let module_rs = src_dir.join("module.rs");
+            let module_dir = src_dir.join("module");
+            let submodule_rs = module_dir.join("submodule.rs");
+            create_file(&lib_rs, r#"mod module;"#);
+            create_file(&module_rs, r#"mod submodule;"#);
+            create_file(&submodule_rs, r#"pub struct SubStruct;"#);
+            let mut parser = setup_parser();
+
+            let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
+
+            assert_eq!(directories.len(), 2);
+            assert!(get_module_directory("", &directories).is_some());
+            let module = get_module_directory("module", &directories).unwrap();
+            assert!(module.internal_files.contains_key("submodule"));
+            let submodule = module.internal_files.get("submodule").unwrap();
+            assert_eq!(submodule.symbols.len(), 1);
+            assert_matches!(
+                &submodule.symbols[0],
+                RustSymbol::Symbol { symbol } if symbol.name == "SubStruct"
             );
         }
     }

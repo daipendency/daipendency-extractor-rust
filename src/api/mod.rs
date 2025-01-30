@@ -123,4 +123,29 @@ pub struct Two;
         assert!(root.get_symbol("One").is_some());
         assert!(root.get_symbol("Two").is_some());
     }
+
+    #[test]
+    fn new_style_module_directory() {
+        let temp_dir = create_temp_dir();
+        let src_dir = temp_dir.path().join("src");
+        let lib_rs = src_dir.join("lib.rs");
+        let module_rs = src_dir.join("module.rs");
+        let module_dir = src_dir.join("module");
+        let submodule_rs = module_dir.join("submodule.rs");
+        create_file(&lib_rs, r#"pub mod module;"#);
+        create_file(&module_rs, r#"pub mod submodule;"#);
+        create_file(&submodule_rs, r#"pub struct Foo;"#);
+        let mut parser = setup_parser();
+
+        let namespaces = build_public_api(&lib_rs, STUB_CRATE_NAME, &mut parser).unwrap();
+
+        assert_eq!(namespaces.len(), 1);
+        let namespace = &namespaces[0];
+        assert_eq!(
+            namespace.name,
+            format!("{STUB_CRATE_NAME}::module::submodule")
+        );
+        assert_eq!(namespace.symbols.len(), 1);
+        assert!(namespace.get_symbol("Foo").is_some());
+    }
 }

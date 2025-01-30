@@ -49,7 +49,7 @@ impl ModuleDirectory {
             self.is_public,
             self.entry_point.doc_comment.clone(),
             &self.entry_point.symbols,
-            Some(&self.internal_files),
+            &self.internal_files,
         )
     }
 }
@@ -59,7 +59,7 @@ fn extract_modules_from_symbols(
     root_module_is_public: bool,
     root_module_doc_comment: Option<String>,
     symbols: &Vec<RustSymbol>,
-    internal_files: Option<&HashMap<String, RustFile>>,
+    internal_files: &HashMap<String, RustFile>,
 ) -> Result<Vec<Module>, ExtractionError> {
     let mut root_module = Module {
         name: root_module_name.to_string(),
@@ -83,7 +83,7 @@ fn extract_modules_from_symbols(
                     *is_public,
                     doc_comment.clone(),
                     content,
-                    None,
+                    &HashMap::new(),
                 )?;
                 submodules.extend(nested_modules);
             }
@@ -91,33 +91,15 @@ fn extract_modules_from_symbols(
                 name,
                 is_reexported,
             } => {
-                if let Some(internal_files) = internal_files {
-                    if let Some(file) = internal_files.get(name) {
-                        let internal_file_modules = extract_modules_from_symbols(
-                            &get_symbol_path(name, &root_module),
-                            *is_reexported,
-                            file.doc_comment.clone(),
-                            &file.symbols,
-                            None,
-                        )?;
-                        submodules.extend(internal_file_modules);
-                    } else {
-                        return Err(ExtractionError::Io(std::io::Error::new(
-                            std::io::ErrorKind::NotFound,
-                            format!(
-                                "Internal file {} not found in module directory {}",
-                                name, root_module_name
-                            ),
-                        )));
-                    }
-                } else {
-                    return Err(ExtractionError::Io(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        format!(
-                            "Imported module {} was not found in {}",
-                            name, root_module_name
-                        ),
-                    )));
+                if let Some(file) = internal_files.get(name) {
+                    let internal_file_modules = extract_modules_from_symbols(
+                        &get_symbol_path(name, &root_module),
+                        *is_reexported,
+                        file.doc_comment.clone(),
+                        &file.symbols,
+                        &HashMap::new(),
+                    )?;
+                    submodules.extend(internal_file_modules);
                 }
             }
             RustSymbol::Symbol { symbol } => {
@@ -482,6 +464,30 @@ mod tests {
                 assert!(!submodule.is_public);
                 assert_eq!(submodule.symbols.len(), 1);
                 assert_eq!(submodule.symbols[0], stub_module_item(symbol));
+            }
+
+            #[test]
+            fn missing_internal_file() {
+                let directory = ModuleDirectory {
+                    name: String::new(),
+                    is_public: true,
+                    entry_point: RustFile {
+                        doc_comment: None,
+                        symbols: vec![RustSymbol::ModuleImport {
+                            name: "missing_module".to_string(),
+                            is_reexported: true,
+                        }],
+                    },
+                    internal_files: HashMap::new(),
+                };
+
+                let modules = directory.extract_modules().unwrap();
+
+                assert_eq!(modules.len(), 1);
+                let root = &modules[0];
+                assert_eq!(root.name, "");
+                assert!(root.is_public);
+                assert_eq!(root.symbols.len(), 0);
             }
         }
     }
