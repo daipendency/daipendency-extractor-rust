@@ -38,6 +38,7 @@ pub enum RustSymbol {
     ModuleImport { name: String, is_reexported: bool },
 }
 
+#[cfg(test)]
 impl RustFile {
     pub fn get_module<'a>(&'a self, path: &str) -> Option<&'a [RustSymbol]> {
         let parts: Vec<&str> = path.split("::").collect();
