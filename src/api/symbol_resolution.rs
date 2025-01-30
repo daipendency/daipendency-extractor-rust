@@ -143,35 +143,23 @@ fn resolve_references(
                     let alias_key =
                         get_symbol_path_from_module_path(alias, &reference.referencing_module);
 
-                    let is_missing = declaration.symbol.source_code.starts_with("pub use");
-
                     let mut chain_modules = declaration.modules.clone();
                     chain_modules.push(reference.referencing_module.clone());
                     let all_public_in_chain = chain_modules
                         .iter()
                         .all(|m| public_module_paths.contains(m));
 
-                    let mut aliased_symbol = SymbolDeclaration {
+                    let aliased_symbol = SymbolDeclaration {
                         symbol: Symbol {
                             name: alias.clone(),
-                            source_code: if is_missing || !all_public_in_chain {
-                                declaration.symbol.source_code.clone()
-                            } else {
+                            source_code: if all_public_in_chain {
                                 format!("pub use {} as {};", reference.source_path, alias)
+                            } else {
+                                rename_symbol_in_source_code(&declaration, alias)
                             },
                         },
                         modules: vec![reference.referencing_module.clone()],
                     };
-
-                    // If the original module is private, rename the symbol in the source code
-                    if !all_public_in_chain {
-                        let old_name = &declaration.symbol.name;
-                        let old_name_regex =
-                            Regex::new(&format!(r"\b{}\b", escape(old_name))).unwrap();
-                        aliased_symbol.symbol.source_code = old_name_regex
-                            .replace_all(&declaration.symbol.source_code, alias)
-                            .to_string();
-                    }
 
                     all_declarations.insert(alias_key, aliased_symbol);
                 }
@@ -211,6 +199,15 @@ fn resolve_references(
     }
 
     Ok(())
+}
+
+fn rename_symbol_in_source_code(declaration: &SymbolDeclaration, alias: &String) -> String {
+    let old_name = &declaration.symbol.name;
+    let old_name_regex = Regex::new(&format!(r"\b{}\b", escape(old_name))).unwrap();
+    let new_source_code = old_name_regex
+        .replace_all(&declaration.symbol.source_code, alias)
+        .to_string();
+    new_source_code
 }
 
 fn resolve_symbol_reference(
