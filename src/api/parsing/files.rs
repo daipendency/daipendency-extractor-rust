@@ -6,26 +6,36 @@ pub struct RustFile {
     pub symbols: Vec<RustSymbol>,
 }
 
-#[derive(Debug, Clone)]
+/// Type of symbol import in a Rust module
+#[derive(Debug, Clone, PartialEq)]
+pub enum ImportType {
+    /// Direct import (e.g. `use submodule::Foo`)
+    Simple,
+    /// Wildcard import (e.g. `use submodule::*`)
+    Wildcard,
+    /// Aliased import (e.g. `use submodule::Foo as Bar`)
+    Aliased(String),
+}
+
+/// The various symbols we care about for the purposes of extracting the public API
+#[derive(Debug, Clone, PartialEq)]
 pub enum RustSymbol {
-    Symbol {
-        symbol: Symbol,
+    /// A public symbol (e.g. `pub struct Foo { ... }`)
+    Symbol { symbol: Symbol },
+    /// A symbol reexport (e.g. `pub use foo::Bar;`)
+    SymbolReexport {
+        source_path: String,
+        import_type: ImportType,
     },
-    Module {
+    /// A module block (e.g. `mod foo { ... }`)
+    ModuleBlock {
         name: String,
+        is_public: bool,
         content: Vec<RustSymbol>,
         doc_comment: Option<String>,
     },
-    ModuleDeclaration {
-        name: String,
-        is_public: bool,
-    },
-    SymbolReexport {
-        source_path: String,
-        is_wildcard: bool,
-        /// The alias of the reexported symbol, if any
-        alias: Option<String>,
-    },
+    /// A module import (e.g. `mod foo;`)
+    ModuleImport { name: String, is_reexported: bool },
 }
 
 #[cfg(test)]
@@ -36,7 +46,7 @@ impl RustFile {
 
         for part in parts {
             let module_symbols = current_symbols.iter().find_map(|symbol| {
-                if let RustSymbol::Module { name, content, .. } = symbol {
+                if let RustSymbol::ModuleBlock { name, content, .. } = symbol {
                     if name == part {
                         Some(content)
                     } else {
@@ -75,8 +85,8 @@ impl RustFile {
 
         symbols.iter().find(|s| match s {
             RustSymbol::Symbol { symbol } => symbol.name == symbol_name,
-            RustSymbol::Module { name, .. } => name == symbol_name,
-            RustSymbol::ModuleDeclaration { name, .. } => name == symbol_name,
+            RustSymbol::ModuleBlock { name, .. } => name == symbol_name,
+            RustSymbol::ModuleImport { name, .. } => name == symbol_name,
             RustSymbol::SymbolReexport { source_path, .. } => {
                 source_path.split("::").last().unwrap() == symbol_name
             }

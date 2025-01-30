@@ -43,7 +43,7 @@ mod tests {
     use assertables::assert_contains;
 
     use super::*;
-    use crate::api::symbol_resolution::ResolvedSymbol;
+    use crate::api::symbol_resolution::SymbolDeclaration;
     use crate::test_helpers::{get_namespace, stub_symbol_with_name};
 
     const STUB_CRATE_NAME: &str = "test_crate";
@@ -65,7 +65,7 @@ mod tests {
     #[test]
     fn one_symbol_in_namespace() {
         let symbol = stub_symbol_with_name(STUB_SYMBOL_NAME);
-        let resolved_symbols = vec![ResolvedSymbol {
+        let resolved_symbols = vec![SymbolDeclaration {
             symbol: symbol.clone(),
             modules: vec![String::new()],
         }];
@@ -90,11 +90,11 @@ mod tests {
         let symbol1 = stub_symbol_with_name("first_symbol");
         let symbol2 = stub_symbol_with_name("second_symbol");
         let resolved_symbols = vec![
-            ResolvedSymbol {
+            SymbolDeclaration {
                 symbol: symbol1.clone(),
                 modules: vec![module_name.clone()],
             },
-            ResolvedSymbol {
+            SymbolDeclaration {
                 symbol: symbol2.clone(),
                 modules: vec![module_name.clone()],
             },
@@ -120,11 +120,11 @@ mod tests {
         let symbol1 = stub_symbol_with_name(&format!("{}_root", STUB_SYMBOL_NAME));
         let symbol2 = stub_symbol_with_name(&format!("{}_nested", STUB_SYMBOL_NAME));
         let resolved_symbols = vec![
-            ResolvedSymbol {
+            SymbolDeclaration {
                 symbol: symbol1.clone(),
                 modules: vec![String::new()],
             },
-            ResolvedSymbol {
+            SymbolDeclaration {
                 symbol: symbol2.clone(),
                 modules: vec!["submodule".to_string()],
             },
@@ -150,7 +150,7 @@ mod tests {
     #[test]
     fn same_symbol_across_namespaces() {
         let symbol = stub_symbol_with_name(STUB_SYMBOL_NAME);
-        let resolved_symbols = vec![ResolvedSymbol {
+        let resolved_symbols = vec![SymbolDeclaration {
             symbol: symbol.clone(),
             modules: vec!["outer".to_string(), "outer::inner".to_string()],
         }];
@@ -176,7 +176,7 @@ mod tests {
     fn hypenated_crate_name() {
         let crate_name = "test-crate";
         let symbol = stub_symbol_with_name(STUB_SYMBOL_NAME);
-        let resolved_symbols = vec![ResolvedSymbol {
+        let resolved_symbols = vec![SymbolDeclaration {
             symbol: symbol.clone(),
             modules: vec![String::new()],
         }];
@@ -198,7 +198,7 @@ mod tests {
     #[test]
     fn doc_comment() {
         let doc_comment = "This is a stub doc comment";
-        let resolved_symbols = vec![ResolvedSymbol {
+        let resolved_symbols = vec![SymbolDeclaration {
             symbol: stub_symbol_with_name(STUB_SYMBOL_NAME),
             modules: vec![String::new()],
         }];
@@ -222,11 +222,11 @@ mod tests {
         #[test]
         fn children() {
             let resolved_symbols = vec![
-                ResolvedSymbol {
+                SymbolDeclaration {
                     symbol: stub_symbol_with_name("test1"),
                     modules: vec![String::new()],
                 },
-                ResolvedSymbol {
+                SymbolDeclaration {
                     symbol: stub_symbol_with_name("test2"),
                     modules: vec!["error".to_string()],
                 },
@@ -247,11 +247,11 @@ mod tests {
         #[test]
         fn siblings() {
             let resolved_symbols = vec![
-                ResolvedSymbol {
+                SymbolDeclaration {
                     symbol: stub_symbol_with_name("test1"),
                     modules: vec!["submodule1".to_string()],
                 },
-                ResolvedSymbol {
+                SymbolDeclaration {
                     symbol: stub_symbol_with_name("test2"),
                     modules: vec!["submodule".to_string()],
                 },

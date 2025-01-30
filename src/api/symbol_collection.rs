@@ -1,157 +1,83 @@
 use daipendency_extractor::ExtractionError;
-use daipendency_extractor::Symbol;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tree_sitter::Parser;
 
-use super::parsing;
+use super::module_directory::ModuleDirectory;
+use super::parsing::{parse_rust_file, RustSymbol};
 
-#[derive(Debug, Clone)]
-pub struct Module {
-    pub name: String,
-    pub definitions: Vec<Symbol>,
-    pub references: Vec<Reference>,
-    pub is_public: bool,
-    pub doc_comment: Option<String>,
+enum LocalModuleType {
+    File,
+    Directory,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Reference {
-    /// A symbol that is reexported directly (e.g. `pub use submodule::Foo`).
-    Symbol(String),
-    /// A symbol that is reexported with an alias (e.g. `pub use submodule::Foo as Bar`).
-    AliasedSymbol {
-        /// The original symbol that is reexported (e.g. `submodule::Foo`).
-        source_path: String,
-        /// The alias that the original symbol is reexported as (e.g. `Bar`).
-        alias: String,
-    },
-    /// A symbol that is reexported with a wildcard (e.g. `pub use submodule::*`).
-    Wildcard(String),
+struct LocalModuleImport {
+    path: String,
+    module_type: LocalModuleType,
 }
 
 /// Traverse the source files of the Rust crate and collect all symbols and symbol references (reexports).
-pub fn collect_symbols(
+pub fn collect_module_directories(
     entry_point: &Path,
     parser: &mut Parser,
-) -> Result<Vec<Module>, ExtractionError> {
-    let mut visited_files = HashMap::new();
-    collect_symbols_recursively(entry_point, "", true, parser, &mut visited_files)
+) -> Result<Vec<ModuleDirectory>, ExtractionError> {
+    recursively_collect_module_directories(entry_point, true, "", parser)
 }
 
-fn collect_symbols_recursively(
-    file_path: &Path,
+fn recursively_collect_module_directories(
+    entry_point_path: &Path,
+    is_root_directory_public: bool,
     namespace_prefix: &str,
-    is_public: bool,
     parser: &mut Parser,
-    visited_files: &mut HashMap<PathBuf, bool>,
-) -> Result<Vec<Module>, ExtractionError> {
-    if visited_files.contains_key(&file_path.to_path_buf()) {
-        return Ok(Vec::new());
-    }
+) -> Result<Vec<ModuleDirectory>, ExtractionError> {
+    let entry_point_content =
+        std::fs::read_to_string(entry_point_path).map_err(ExtractionError::Io)?;
 
-    let content = std::fs::read_to_string(file_path).map_err(ExtractionError::Io)?;
+    let entry_point_file = parse_rust_file(&entry_point_content, parser)?;
 
-    visited_files.insert(file_path.to_path_buf(), true);
-    let rust_file = parsing::parse_rust_file(&content, parser)?;
-
-    collect_module_symbols(
-        rust_file.symbols,
-        namespace_prefix,
-        is_public,
-        file_path,
-        parser,
-        visited_files,
-        rust_file.doc_comment,
-    )
-}
-
-fn collect_module_symbols(
-    content: Vec<parsing::RustSymbol>,
-    namespace_prefix: &str,
-    is_public: bool,
-    file_path: &Path,
-    parser: &mut Parser,
-    visited_files: &mut HashMap<PathBuf, bool>,
-    doc_comment: Option<String>,
-) -> Result<Vec<Module>, ExtractionError> {
-    let mut modules = Vec::new();
-    let mut current_namespace = Module {
-        name: namespace_prefix.to_string(),
-        definitions: Vec::new(),
-        references: Vec::new(),
-        is_public,
-        doc_comment,
-    };
-
-    for symbol in content {
-        match symbol {
-            parsing::RustSymbol::Symbol { symbol } => {
-                current_namespace.definitions.push(symbol.clone());
-            }
-            parsing::RustSymbol::Module {
-                name,
-                content,
-                doc_comment,
-            } => {
-                let module_namespace = prefix_namespace(&name, namespace_prefix);
-                let mut nested_modules = collect_module_symbols(
-                    content,
-                    &module_namespace,
-                    is_public,
-                    file_path,
-                    parser,
-                    visited_files,
-                    doc_comment,
-                )?;
-                modules.append(&mut nested_modules);
-            }
-            parsing::RustSymbol::ModuleDeclaration {
-                name,
-                is_public: module_is_public,
-                ..
-            } => {
-                if let Ok(module_path) = resolve_module_path(file_path, &name) {
-                    let module_namespace = prefix_namespace(&name, namespace_prefix);
-                    let mut child_namespaces = collect_symbols_recursively(
-                        &module_path,
-                        &module_namespace,
-                        module_is_public,
-                        parser,
-                        visited_files,
-                    )?;
-                    modules.append(&mut child_namespaces);
+    let mut internal_files = HashMap::new();
+    let mut imported_directories = Vec::new();
+    for symbol in &entry_point_file.symbols {
+        if let RustSymbol::ModuleImport {
+            name,
+            is_reexported,
+        } = symbol
+        {
+            let import = categorise_module_import(entry_point_path, name)?;
+            match import.module_type {
+                LocalModuleType::File => {
+                    let file = parse_rust_file(&std::fs::read_to_string(&import.path)?, parser)?;
+                    internal_files.insert(name.clone(), file);
                 }
-            }
-            parsing::RustSymbol::SymbolReexport {
-                source_path,
-                is_wildcard,
-                alias,
-            } => {
-                let source_path = prefix_namespace(&source_path, namespace_prefix);
-                if is_wildcard {
-                    current_namespace
-                        .references
-                        .push(Reference::Wildcard(source_path));
-                } else if let Some(alias_name) = alias {
-                    current_namespace.references.push(Reference::AliasedSymbol {
-                        source_path,
-                        alias: alias_name,
-                    });
-                } else {
-                    current_namespace
-                        .references
-                        .push(Reference::Symbol(source_path));
+                LocalModuleType::Directory => {
+                    let module_name = prefix_namespace(name, namespace_prefix);
+                    let directories = recursively_collect_module_directories(
+                        &PathBuf::from(&import.path),
+                        *is_reexported,
+                        &module_name,
+                        parser,
+                    )?;
+                    imported_directories.extend(directories);
                 }
             }
         }
     }
 
-    modules.push(current_namespace);
-    Ok(modules)
+    let root_module_directory = ModuleDirectory {
+        name: namespace_prefix.to_string(),
+        is_public: is_root_directory_public,
+        entry_point: entry_point_file,
+        internal_files,
+    };
+    let mut directories = vec![root_module_directory];
+    directories.extend(imported_directories);
+    Ok(directories)
 }
 
-fn resolve_module_path(current_file: &Path, module_name: &str) -> Result<PathBuf, ExtractionError> {
+fn categorise_module_import(
+    current_file: &Path,
+    module_name: &str,
+) -> Result<LocalModuleImport, ExtractionError> {
     let parent = current_file.parent().ok_or_else(|| {
         ExtractionError::Malformed(format!(
             "Failed to get parent directory of {}",
@@ -161,12 +87,18 @@ fn resolve_module_path(current_file: &Path, module_name: &str) -> Result<PathBuf
 
     let mod_rs_path = parent.join(module_name).join("mod.rs");
     if mod_rs_path.exists() {
-        return Ok(mod_rs_path);
+        return Ok(LocalModuleImport {
+            path: mod_rs_path.to_string_lossy().to_string(),
+            module_type: LocalModuleType::Directory,
+        });
     }
 
     let rs_path = parent.join(format!("{}.rs", module_name));
     if rs_path.exists() {
-        return Ok(rs_path);
+        return Ok(LocalModuleImport {
+            path: rs_path.to_string_lossy().to_string(),
+            module_type: LocalModuleType::File,
+        });
     }
 
     Err(ExtractionError::Malformed(format!(
@@ -189,13 +121,14 @@ mod tests {
     use super::*;
     use crate::test_helpers::setup_parser;
     use crate::test_helpers::{create_file, create_temp_dir};
+    use assertables::assert_matches;
 
     #[test]
     fn non_existing_file() {
         let path = PathBuf::from("non-existing.rs");
         let mut parser = setup_parser();
 
-        let result = collect_symbols(&path, &mut parser);
+        let result = collect_module_directories(&path, &mut parser);
 
         assert!(matches!(result, Err(ExtractionError::Io(_))));
     }
@@ -222,12 +155,32 @@ pub fn module_b_function() {}
         let mut parser = setup_parser();
 
         // This should complete without infinite recursion
-        let modules = collect_symbols(&module_a_rs, &mut parser).unwrap();
+        let directories = collect_module_directories(&module_a_rs, &mut parser).unwrap();
 
-        assert!(!modules.is_empty());
+        assert!(!directories.is_empty());
+    }
+
+    #[test]
+    fn root_module_directory_visibility() {
+        let temp_dir = create_temp_dir();
+        let lib_rs = temp_dir.path().join("src").join("lib.rs");
+        create_file(
+            &lib_rs,
+            r#"
+pub fn public_function() {}
+"#,
+        );
+        let mut parser = setup_parser();
+
+        let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
+
+        assert_eq!(directories.len(), 1);
+        assert!(directories[0].is_public);
     }
 
     mod exports {
+        use assertables::assert_matches;
+
         use super::*;
 
         #[test]
@@ -242,14 +195,17 @@ pub fn public_function() {}
             );
             let mut parser = setup_parser();
 
-            let modules = collect_symbols(&lib_rs, &mut parser).unwrap();
+            let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
 
-            assert_eq!(modules.len(), 1);
-            assert_eq!(modules[0].name, "");
-            assert_eq!(modules[0].definitions.len(), 1);
+            assert_eq!(directories.len(), 1);
+            assert_eq!(directories[0].name, "");
+            assert_eq!(directories[0].entry_point.symbols.len(), 1);
 
-            let definitions = &modules[0].definitions;
-            assert!(definitions.iter().any(|s| s.name == "public_function"));
+            let definitions = &directories[0].entry_point.symbols;
+            assert!(matches!(
+                &definitions[0],
+                RustSymbol::Symbol { symbol } if symbol.name == "public_function"
+            ));
         }
 
         #[test]
@@ -264,11 +220,11 @@ fn private_function() {}
             );
             let mut parser = setup_parser();
 
-            let modules = collect_symbols(&lib_rs, &mut parser).unwrap();
+            let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
 
-            assert_eq!(modules.len(), 1);
-            assert_eq!(modules[0].name, "");
-            assert_eq!(modules[0].definitions.len(), 0);
+            assert_eq!(directories.len(), 1);
+            assert_eq!(directories[0].name, "");
+            assert_eq!(directories[0].entry_point.symbols.len(), 0);
         }
 
         #[test]
@@ -283,10 +239,17 @@ pub mod public_module {}
             );
             let mut parser = setup_parser();
 
-            let modules = collect_symbols(&lib_rs, &mut parser).unwrap();
+            let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
 
-            assert_eq!(modules.len(), 2);
-            assert!(modules.iter().any(|n| n.name == "public_module"));
+            assert_eq!(directories.len(), 1);
+            let root = directories.get(0).unwrap();
+            assert_eq!(root.name, "");
+            assert_eq!(root.entry_point.symbols.len(), 1);
+            assert_matches!(
+                &root.entry_point.symbols[0],
+                RustSymbol::ModuleBlock { name, is_public: true, doc_comment: None, .. }
+                if name == "public_module"
+            );
         }
 
         #[test]
@@ -301,36 +264,28 @@ mod private_module {}
             );
             let mut parser = setup_parser();
 
-            let modules = collect_symbols(&lib_rs, &mut parser).unwrap();
+            let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
 
-            assert_eq!(modules.len(), 1);
-            assert!(modules.iter().any(|n| n.name == ""));
+            assert_eq!(directories.len(), 1);
+            let root = directories.get(0).unwrap();
+            assert_eq!(root.name, "");
+            assert_eq!(root.entry_point.symbols.len(), 1);
+            assert_matches!(
+                &root.entry_point.symbols[0],
+                RustSymbol::ModuleBlock {
+                    is_public: false,
+                    ..
+                }
+            );
         }
     }
 
     mod reexports {
-        use crate::api::test_helpers::get_module;
+        use crate::api::parsing::ImportType;
+
+        use crate::api::test_helpers::get_module_directory;
 
         use super::*;
-
-        #[test]
-        fn missing_module() {
-            let temp_dir = create_temp_dir();
-            let lib_rs = temp_dir.path().join("src").join("lib.rs");
-            create_file(
-                &lib_rs,
-                r#"
-    pub mod missing;
-    "#,
-            );
-            let mut parser = setup_parser();
-
-            let modules = collect_symbols(&lib_rs, &mut parser).unwrap();
-
-            assert_eq!(modules.len(), 1);
-            assert_eq!(modules[0].name, "");
-            assert_eq!(modules[0].references.len(), 0);
-        }
 
         #[test]
         fn module_reexport() {
@@ -341,33 +296,34 @@ mod private_module {}
             create_file(
                 &lib_rs,
                 r#"
-    pub mod module;
-    pub use module::InnerStruct;
-    "#,
+pub mod module;
+"#,
             );
             create_file(
                 &module_rs,
                 r#"
-    pub struct InnerStruct;
-    "#,
+pub struct InnerStruct;
+"#,
             );
 
             let mut parser = setup_parser();
-            let modules = collect_symbols(&lib_rs, &mut parser).unwrap();
+            let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
 
-            assert_eq!(modules.len(), 2);
-            let root = get_module("", &modules).unwrap();
-            assert_eq!(root.definitions.len(), 0);
-            assert_eq!(root.references.len(), 1);
-            assert_eq!(
-                root.references[0],
-                Reference::Symbol("module::InnerStruct".to_string())
+            assert_eq!(directories.len(), 1);
+            let root = get_module_directory("", &directories).unwrap();
+            assert_eq!(root.entry_point.symbols.len(), 1);
+            assert_matches!(
+                &root.entry_point.symbols[0],
+                RustSymbol::ModuleImport { name, is_reexported: true }
+                if name == "module"
             );
 
-            let module = get_module("module", &modules).unwrap();
-            assert_eq!(module.definitions.len(), 1);
-            assert_eq!(module.references.len(), 0);
-            assert_eq!(module.definitions[0].name, "InnerStruct");
+            let module_file = root.internal_files.get("module").unwrap();
+            assert_eq!(module_file.symbols.len(), 1);
+            assert_matches!(
+                &module_file.symbols[0],
+                RustSymbol::Symbol { symbol } if symbol.name == "InnerStruct"
+            );
         }
 
         #[test]
@@ -378,34 +334,44 @@ mod private_module {}
             create_file(
                 &lib_rs,
                 r#"
-    mod formatter;
-    pub use formatter::Format;
-    "#,
+mod formatter;
+pub use formatter::Format;
+"#,
             );
             create_file(
                 &formatter_rs,
                 r#"
-    pub enum Format {
-        Plain,
-        Rich,
-    }
-    "#,
+pub enum Format {
+    Plain,
+    Rich,
+}
+"#,
             );
             let mut parser = setup_parser();
 
-            let modules = collect_symbols(&lib_rs, &mut parser).unwrap();
+            let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
 
-            let formatter = get_module("formatter", &modules).unwrap();
-            assert_eq!(formatter.definitions.len(), 1);
-            assert!(formatter.definitions.iter().any(|s| s.name == "Format"));
-            assert!(!formatter.is_public);
-            // But its symbols should be reexported in the text module
-            let text = get_module("", &modules).unwrap();
-            assert_eq!(text.references.len(), 1);
-            assert!(text
-                .references
-                .iter()
-                .any(|path| path == &Reference::Symbol("formatter::Format".to_string())));
+            assert_eq!(directories.len(), 1);
+            let root = get_module_directory("", &directories).unwrap();
+            assert_eq!(root.entry_point.symbols.len(), 2);
+
+            assert_matches!(
+                &root.entry_point.symbols[0],
+                RustSymbol::ModuleImport { name, is_reexported: false }
+                if name == "formatter"
+            );
+            assert_matches!(
+                &root.entry_point.symbols[1],
+                RustSymbol::SymbolReexport { source_path, import_type }
+                if source_path == "formatter::Format" && matches!(import_type, ImportType::Simple)
+            );
+
+            let formatter_file = root.internal_files.get("formatter").unwrap();
+            assert_eq!(formatter_file.symbols.len(), 1);
+            assert_matches!(
+                &formatter_file.symbols[0],
+                RustSymbol::Symbol { symbol } if symbol.name == "Format"
+            );
         }
 
         #[test]
@@ -415,7 +381,6 @@ mod private_module {}
             let formatting_dir = temp_dir.path().join("src").join("formatting");
             let formatting_mod_rs = formatting_dir.join("mod.rs");
             let format_rs = formatting_dir.join("format.rs");
-
             create_file(
                 &lib_rs,
                 r#"
@@ -433,38 +398,47 @@ mod private_module {}
             create_file(
                 &format_rs,
                 r#"
-    pub enum Format {
-        Markdown,
-        Html,
-        Plain,
-    }
+    pub enum Format { Markdown, Html }
     "#,
             );
-
             let mut parser = setup_parser();
-            let modules = collect_symbols(&lib_rs, &mut parser).unwrap();
 
-            assert_eq!(modules.len(), 3);
-            let root = get_module("", &modules).unwrap();
-            assert_eq!(root.definitions.len(), 0);
-            assert_eq!(root.references.len(), 1);
-            assert_eq!(
-                root.references[0],
-                Reference::Symbol("formatting::Format".to_string())
+            let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
+
+            assert_eq!(directories.len(), 2);
+            let root = get_module_directory("", &directories).unwrap();
+            assert_eq!(root.entry_point.symbols.len(), 2);
+            assert_matches!(
+                &root.entry_point.symbols[0],
+                RustSymbol::ModuleImport { name, is_reexported: false }
+                if name == "formatting"
+            );
+            assert_matches!(
+                &root.entry_point.symbols[1],
+                RustSymbol::SymbolReexport { source_path, import_type }
+                if source_path == "formatting::Format" && matches!(import_type, ImportType::Simple)
             );
 
-            let formatting = get_module("formatting", &modules).unwrap();
-            assert_eq!(formatting.definitions.len(), 0);
-            assert_eq!(formatting.references.len(), 1);
-            assert_eq!(
-                formatting.references[0],
-                Reference::Symbol("formatting::format::Format".to_string())
+            let formatting = get_module_directory("formatting", &directories).unwrap();
+            assert!(!formatting.is_public);
+            assert_eq!(formatting.entry_point.symbols.len(), 2);
+            assert_matches!(
+                &formatting.entry_point.symbols[0],
+                RustSymbol::ModuleImport { name, is_reexported: false }
+                if name == "format"
+            );
+            assert_matches!(
+                &formatting.entry_point.symbols[1],
+                RustSymbol::SymbolReexport { source_path, import_type }
+                if source_path == "format::Format" && matches!(import_type, ImportType::Simple)
             );
 
-            let format = get_module("formatting::format", &modules).unwrap();
-            assert_eq!(format.definitions.len(), 1);
-            assert_eq!(format.references.len(), 0);
-            assert_eq!(format.definitions[0].name, "Format");
+            let format_file = formatting.internal_files.get("format").unwrap();
+            assert_eq!(format_file.symbols.len(), 1);
+            assert_matches!(
+                &format_file.symbols[0],
+                RustSymbol::Symbol { symbol } if symbol.name == "Format"
+            );
         }
 
         #[test]
@@ -476,22 +450,33 @@ mod private_module {}
                 r#"
 pub mod child {
     pub mod grandchild {
-        pub enum Format {
-            Plain,
-            Rich,
-        }
+        pub enum Format { Plain, Rich }
     }
 }
+
+pub use child::grandchild::Format;
 "#,
             );
             let mut parser = setup_parser();
 
-            let modules = collect_symbols(&lib_rs, &mut parser).unwrap();
+            let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
 
-            let grandchild = get_module("child::grandchild", &modules).unwrap();
-            assert_eq!(grandchild.definitions.len(), 1);
-            let enum_definition = grandchild.definitions.iter().find(|s| s.name == "Format");
-            assert!(enum_definition.is_some());
+            assert_eq!(directories.len(), 1);
+            let root = &directories[0];
+            assert_eq!(root.entry_point.symbols.len(), 2);
+            assert!(matches!(
+                &root.entry_point.symbols[0],
+                RustSymbol::ModuleBlock { name, is_public: true, content: child_content, doc_comment: None }
+                if name == "child" &&
+                matches!(&child_content[0], RustSymbol::ModuleBlock { name, is_public: true, content: grandchild_content, doc_comment: None } if name == "grandchild" &&
+                  matches!(&grandchild_content[0], RustSymbol::Symbol { symbol } if symbol.name == "Format")
+                  )
+            ));
+            assert_matches!(
+                &root.entry_point.symbols[1],
+                RustSymbol::SymbolReexport { source_path, import_type: ImportType::Simple }
+                if source_path == "child::grandchild::Format"
+            );
         }
 
         #[test]
@@ -499,7 +484,6 @@ pub mod child {
             let temp_dir = create_temp_dir();
             let lib_rs = temp_dir.path().join("src").join("lib.rs");
             let module_rs = temp_dir.path().join("src").join("module.rs");
-
             create_file(
                 &lib_rs,
                 r#"
@@ -513,17 +497,29 @@ pub mod child {
     pub struct InnerStruct;
     "#,
             );
-
             let mut parser = setup_parser();
-            let modules = collect_symbols(&lib_rs, &mut parser).unwrap();
 
-            assert_eq!(modules.len(), 2);
-            let root = get_module("", &modules).unwrap();
-            assert_eq!(root.definitions.len(), 0);
-            assert_eq!(root.references.len(), 1);
-            assert_eq!(
-                root.references[0],
-                Reference::Wildcard("module".to_string())
+            let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
+
+            assert_eq!(directories.len(), 1);
+            let root = get_module_directory("", &directories).unwrap();
+            assert_eq!(root.entry_point.symbols.len(), 2);
+            assert_matches!(
+                &root.entry_point.symbols[0],
+                RustSymbol::ModuleImport { name, is_reexported: false }
+                if name == "module"
+            );
+            assert_matches!(
+                &root.entry_point.symbols[1],
+                RustSymbol::SymbolReexport { source_path, import_type }
+                if source_path == "module" && matches!(import_type, ImportType::Wildcard)
+            );
+
+            let module_file = root.internal_files.get("module").unwrap();
+            assert_eq!(module_file.symbols.len(), 1);
+            assert_matches!(
+                &module_file.symbols[0],
+                RustSymbol::Symbol { symbol } if symbol.name == "InnerStruct"
             );
         }
 
@@ -532,7 +528,6 @@ pub mod child {
             let temp_dir = create_temp_dir();
             let lib_rs = temp_dir.path().join("src").join("lib.rs");
             let submodule_rs = temp_dir.path().join("src").join("submodule.rs");
-
             create_file(
                 &lib_rs,
                 r#"
@@ -546,25 +541,74 @@ pub mod child {
     pub struct Foo;
     "#,
             );
+            let mut parser = setup_parser();
+
+            let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
+
+            assert_eq!(directories.len(), 1);
+            let root = get_module_directory("", &directories).unwrap();
+            assert_eq!(root.entry_point.symbols.len(), 2);
+            assert_matches!(
+                &root.entry_point.symbols[0],
+                RustSymbol::ModuleImport { name, is_reexported: false }
+                if name == "submodule"
+            );
+            assert_matches!(
+                &root.entry_point.symbols[1],
+                RustSymbol::SymbolReexport { source_path, import_type }
+                if source_path == "submodule::Foo" && matches!(import_type, ImportType::Aliased(alias) if alias == "Bar")
+            );
+
+            let submodule_file = root.internal_files.get("submodule").unwrap();
+            assert_eq!(submodule_file.symbols.len(), 1);
+            assert_matches!(
+                &submodule_file.symbols[0],
+                RustSymbol::Symbol { symbol } if symbol.name == "Foo"
+            );
+        }
+
+        #[test]
+        fn file_with_mod_in_name() {
+            let temp_dir = create_temp_dir();
+            let lib_rs = temp_dir.path().join("src").join("lib.rs");
+            let my_mod_rs = temp_dir.path().join("src").join("my_mod.rs");
+
+            create_file(
+                &lib_rs,
+                r#"
+    mod my_mod;
+    pub use my_mod::MyStruct;
+    "#,
+            );
+            create_file(
+                &my_mod_rs,
+                r#"
+    pub struct MyStruct;
+    "#,
+            );
 
             let mut parser = setup_parser();
-            let modules = collect_symbols(&lib_rs, &mut parser).unwrap();
+            let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
 
-            assert_eq!(modules.len(), 2);
-            let root = get_module("", &modules).unwrap();
-            assert_eq!(root.definitions.len(), 0);
-            assert_eq!(root.references.len(), 1);
-            assert_eq!(
-                root.references[0],
-                Reference::AliasedSymbol {
-                    source_path: "submodule::Foo".to_string(),
-                    alias: "Bar".to_string(),
-                }
+            assert_eq!(directories.len(), 1);
+            let root = get_module_directory("", &directories).unwrap();
+            assert_eq!(root.entry_point.symbols.len(), 2);
+            assert_matches!(
+                &root.entry_point.symbols[0],
+                RustSymbol::ModuleImport { name, is_reexported: false } if name == "my_mod"
             );
-            let submodule = get_module("submodule", &modules).unwrap();
-            assert_eq!(submodule.definitions.len(), 1);
-            assert_eq!(submodule.references.len(), 0);
-            assert_eq!(submodule.definitions[0].name, "Foo");
+            assert_matches!(
+                &root.entry_point.symbols[1],
+                RustSymbol::SymbolReexport { source_path, import_type }
+                if source_path == "my_mod::MyStruct" && matches!(import_type, ImportType::Simple)
+            );
+
+            let my_mod_file = root.internal_files.get("my_mod").unwrap();
+            assert_eq!(my_mod_file.symbols.len(), 1);
+            assert_matches!(
+                &my_mod_file.symbols[0],
+                RustSymbol::Symbol { symbol } if symbol.name == "MyStruct"
+            );
         }
     }
 
@@ -585,12 +629,12 @@ pub struct Test {}
             );
 
             let mut parser = setup_parser();
-            let modules = collect_symbols(&lib_rs, &mut parser).unwrap();
+            let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
 
-            assert_eq!(modules.len(), 1);
-            assert_eq!(modules[0].name, "");
+            assert_eq!(directories.len(), 1);
+            assert_eq!(directories[0].name, "");
             assert_eq!(
-                modules[0].doc_comment,
+                directories[0].entry_point.doc_comment,
                 Some(
                     "//! This is a file-level doc comment.\n//! It can span multiple lines.\n"
                         .to_string()
@@ -607,23 +651,21 @@ pub struct Test {}
                 r#"
 pub mod inner {
     //! This is the inner doc comment
-    //! It spans multiple lines
-
-    pub fn nested_function() -> String {}
 }
 "#,
             );
 
             let mut parser = setup_parser();
-            let modules = collect_symbols(&lib_rs, &mut parser).unwrap();
+            let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
 
-            assert_eq!(modules.len(), 2);
-            let inner_namespace = modules.iter().find(|n| n.name == "inner").unwrap();
-            assert_eq!(
-                inner_namespace.doc_comment,
-                Some(
-                    "//! This is the inner doc comment\n//! It spans multiple lines\n".to_string()
-                )
+            assert_eq!(directories.len(), 1);
+            let root = directories.get(0).unwrap();
+            assert_eq!(root.name, "");
+            assert_eq!(root.entry_point.symbols.len(), 1);
+            assert_matches!(
+                &root.entry_point.symbols[0],
+                RustSymbol::ModuleBlock { name, is_public: true, doc_comment, .. }
+                if name == "inner" && *doc_comment == Some("//! This is the inner doc comment\n".to_string())
             );
         }
     }

@@ -90,6 +90,7 @@ dependencies = [
  "cargo_metadata",
  "cc",
  "daipendency-extractor",
+ "regex",
  "serde",
  "tempfile",
  "toml",
