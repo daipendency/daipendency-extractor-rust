@@ -275,7 +275,7 @@ fn resolve_symbol_reference(
                 reference,
                 all_declarations,
                 all_references,
-                &mut visited.clone(),
+                visited,
                 all_modules,
             )?;
             for declaration in &mut resolved_declarations {
@@ -328,7 +328,7 @@ fn get_module_declarations(
                     &reexport_ref,
                     all_declarations,
                     all_references,
-                    &mut visited.clone(),
+                    visited,
                     all_modules,
                 )?;
                 target_module_declarations.extend(resolved_declarations);
