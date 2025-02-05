@@ -375,7 +375,7 @@ pub enum Format {
             );
             assert_matches!(
                 &root.entry_point.symbols[1],
-                RustSymbol::SymbolReexport { source_path, import_type }
+                RustSymbol::Reexport { source_path, import_type }
                 if source_path == "formatter::Format" && matches!(import_type, ImportType::Simple)
             );
 
@@ -428,7 +428,7 @@ pub enum Format {
             );
             assert_matches!(
                 &root.entry_point.symbols[1],
-                RustSymbol::SymbolReexport { source_path, import_type }
+                RustSymbol::Reexport { source_path, import_type }
                 if source_path == "formatting::Format" && matches!(import_type, ImportType::Simple)
             );
 
@@ -442,7 +442,7 @@ pub enum Format {
             );
             assert_matches!(
                 &formatting.entry_point.symbols[1],
-                RustSymbol::SymbolReexport { source_path, import_type }
+                RustSymbol::Reexport { source_path, import_type }
                 if source_path == "format::Format" && matches!(import_type, ImportType::Simple)
             );
 
@@ -487,7 +487,7 @@ pub use child::grandchild::Format;
             ));
             assert_matches!(
                 &root.entry_point.symbols[1],
-                RustSymbol::SymbolReexport { source_path, import_type: ImportType::Simple }
+                RustSymbol::Reexport { source_path, import_type: ImportType::Simple }
                 if source_path == "child::grandchild::Format"
             );
         }
@@ -524,7 +524,7 @@ pub use child::grandchild::Format;
             );
             assert_matches!(
                 &root.entry_point.symbols[1],
-                RustSymbol::SymbolReexport { source_path, import_type }
+                RustSymbol::Reexport { source_path, import_type }
                 if source_path == "module" && matches!(import_type, ImportType::Wildcard)
             );
 
@@ -568,7 +568,7 @@ pub use child::grandchild::Format;
             );
             assert_matches!(
                 &root.entry_point.symbols[1],
-                RustSymbol::SymbolReexport { source_path, import_type }
+                RustSymbol::Reexport { source_path, import_type }
                 if source_path == "submodule::Foo" && matches!(import_type, ImportType::Aliased(alias) if alias == "Bar")
             );
 
@@ -612,7 +612,7 @@ pub use child::grandchild::Format;
             );
             assert_matches!(
                 &root.entry_point.symbols[1],
-                RustSymbol::SymbolReexport { source_path, import_type }
+                RustSymbol::Reexport { source_path, import_type }
                 if source_path == "my_mod::MyStruct" && matches!(import_type, ImportType::Simple)
             );
 

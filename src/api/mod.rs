@@ -148,4 +148,26 @@ pub struct Two;
         assert_eq!(namespace.symbols.len(), 1);
         assert!(namespace.get_symbol("Foo").is_some());
     }
+
+    #[test]
+    fn external_dependency_reexport() {
+        let temp_dir = create_temp_dir();
+        let lib_rs = temp_dir.path().join("src").join("lib.rs");
+        create_file(
+            &lib_rs,
+            r#"
+pub use serde_json;
+"#,
+        );
+        let mut parser = setup_parser();
+
+        let namespaces = build_public_api(&lib_rs, STUB_CRATE_NAME, &mut parser).unwrap();
+
+        assert_eq!(namespaces.len(), 1);
+        let root = &namespaces[0];
+        assert_eq!(root.name, STUB_CRATE_NAME);
+        assert_eq!(root.symbols.len(), 1);
+        let symbol = root.get_symbol("serde_json").unwrap();
+        assert_eq!(symbol.source_code, "pub use serde_json;");
+    }
 }

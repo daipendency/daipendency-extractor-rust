@@ -107,7 +107,7 @@ fn extract_modules_from_symbols(
                     symbol: symbol.clone(),
                 });
             }
-            RustSymbol::SymbolReexport {
+            RustSymbol::Reexport {
                 source_path,
                 import_type,
             } => {
@@ -225,7 +225,7 @@ mod tests {
                             name: "submodule".to_string(),
                             is_reexported: false,
                         },
-                        RustSymbol::SymbolReexport {
+                        RustSymbol::Reexport {
                             source_path: "submodule::test".to_string(),
                             import_type: ImportType::Simple,
                         },

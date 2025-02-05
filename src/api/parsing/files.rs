@@ -22,8 +22,8 @@ pub enum ImportType {
 pub enum RustSymbol {
     /// A public symbol (e.g. `pub struct Foo { ... }`)
     Symbol { symbol: Symbol },
-    /// A symbol reexport (e.g. `pub use foo::Bar;`)
-    SymbolReexport {
+    /// A module or symbol reexport (e.g. `pub use serde_json;`, `pub use serde_json::Value;`)
+    Reexport {
         source_path: String,
         import_type: ImportType,
     },
@@ -87,7 +87,7 @@ impl RustFile {
             RustSymbol::Symbol { symbol } => symbol.name == symbol_name,
             RustSymbol::ModuleBlock { name, .. } => name == symbol_name,
             RustSymbol::ModuleImport { name, .. } => name == symbol_name,
-            RustSymbol::SymbolReexport { source_path, .. } => {
+            RustSymbol::Reexport { source_path, .. } => {
                 source_path.split("::").last().unwrap() == symbol_name
             }
         })

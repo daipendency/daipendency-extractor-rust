@@ -6,14 +6,14 @@ mod doc_comments;
 mod files;
 mod helpers;
 mod macros;
-mod symbol_reexports;
+mod reexports;
 mod symbols;
 mod test_helpers;
 
 use doc_comments::extract_inner_doc_comments;
 use helpers::{extract_name, get_declaration_list, is_public};
 use macros::get_macro_source_code;
-use symbol_reexports::extract_symbol_reexports;
+use reexports::extract_symbol_reexports;
 use symbols::get_symbol_source_code;
 
 pub use files::{ImportType, RustFile, RustSymbol};
