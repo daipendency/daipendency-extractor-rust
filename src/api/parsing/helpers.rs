@@ -47,7 +47,7 @@ pub fn extract_name(node: &Node, source_code: &str) -> Result<String, Extraction
         .and_then(|child| {
             child
                 .utf8_text(source_code.as_bytes())
-                .map(|s| s.to_string())
+                .map(|s| s.trim_start_matches("r#").to_string())
                 .ok()
         })
         .ok_or_else(|| ExtractionError::Malformed("Failed to extract name".to_string()))
@@ -197,6 +197,16 @@ mod tests {
             let name = extract_name(&module_node, "mod test_module {}").unwrap();
 
             assert_eq!(name, "test_module");
+        }
+
+        #[test]
+        fn raw_identifier() {
+            let tree = make_tree("fn r#type() {}");
+            let function = find_child_node(tree.root_node(), "function_item");
+
+            let name = extract_name(&function, "fn r#type() {}").unwrap();
+
+            assert_eq!(name, "type");
         }
 
         #[test]

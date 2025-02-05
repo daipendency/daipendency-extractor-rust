@@ -14,7 +14,7 @@ pub fn extract_symbol_reexports(
     let mut cursor = use_declaration_node.walk();
     let children: Vec<_> = use_declaration_node.children(&mut cursor).collect();
 
-    if let Some(scoped) = children.iter().find(|c| c.kind() == "scoped_identifier") {
+    let result = if let Some(scoped) = children.iter().find(|c| c.kind() == "scoped_identifier") {
         extract_single_reexport(scoped, source_code)
     } else if let Some(use_as) = children.iter().find(|c| c.kind() == "use_as_clause") {
         extract_renamed_reexport(use_as, source_code)
@@ -31,7 +31,9 @@ pub fn extract_symbol_reexports(
                 .utf8_text(source_code.as_bytes())
                 .unwrap()
         )))
-    }
+    };
+
+    result.map(normalize_raw_identifiers)
 }
 
 fn extract_external_crate_reexport(
@@ -154,6 +156,37 @@ fn extract_multi_reexports(
                 source_path: format!("{}::{}", path_prefix, name),
                 import_type: ImportType::Simple,
             })
+        })
+        .collect()
+}
+
+fn normalize_raw_identifiers(symbols: Vec<RustSymbol>) -> Vec<RustSymbol> {
+    symbols
+        .into_iter()
+        .map(|symbol| match symbol {
+            RustSymbol::Reexport {
+                source_path,
+                import_type,
+            } => {
+                let normalized_path = source_path
+                    .split("::")
+                    .map(|part| part.trim_start_matches("r#").to_string())
+                    .collect::<Vec<_>>()
+                    .join("::");
+
+                let normalized_type = match import_type {
+                    ImportType::Aliased(alias) => {
+                        ImportType::Aliased(alias.trim_start_matches("r#").to_string())
+                    }
+                    other => other,
+                };
+
+                RustSymbol::Reexport {
+                    source_path: normalized_path,
+                    import_type: normalized_type,
+                }
+            }
+            other => other,
         })
         .collect()
 }
@@ -306,5 +339,97 @@ pub use crate::inner::*;
                 import_type: ImportType::Wildcard,
             } if source_path == "crate::inner"
         );
+    }
+
+    mod raw_identifiers {
+        use super::*;
+
+        #[test]
+        fn module_import() {
+            let source_code = r#"pub use r#type;"#;
+            let tree = make_tree(source_code);
+            let use_declaration = find_child_node(tree.root_node(), "use_declaration");
+
+            let symbols = extract_symbol_reexports(&use_declaration, source_code).unwrap();
+
+            assert_eq!(symbols.len(), 1);
+            assert_matches!(
+                &symbols[0],
+                RustSymbol::Reexport { source_path, import_type: ImportType::Simple } if source_path == "type"
+            );
+        }
+
+        #[test]
+        fn simple_symbol_import() {
+            let source_code = r#"pub use submodule::r#fn;"#;
+            let tree = make_tree(source_code);
+            let use_declaration = find_child_node(tree.root_node(), "use_declaration");
+
+            let symbols = extract_symbol_reexports(&use_declaration, source_code).unwrap();
+
+            assert_eq!(symbols.len(), 1);
+            assert_matches!(
+                &symbols[0],
+                RustSymbol::Reexport { source_path, import_type: ImportType::Simple } if source_path == "submodule::fn"
+            );
+        }
+
+        #[test]
+        fn alias_module_as_raw() {
+            let source_code = r#"pub use submodule::the_type as r#type;"#;
+            let tree = make_tree(source_code);
+            let use_declaration = find_child_node(tree.root_node(), "use_declaration");
+
+            let symbols = extract_symbol_reexports(&use_declaration, source_code).unwrap();
+
+            assert_eq!(symbols.len(), 1);
+            assert_matches!(
+                &symbols[0],
+                RustSymbol::Reexport { source_path, import_type: ImportType::Aliased(alias) }
+                if source_path == "submodule::the_type" && alias == "type"
+            );
+        }
+
+        #[test]
+        fn alias_raw_as_module() {
+            let source_code = r#"pub use r#type::Foo as Bar;"#;
+            let tree = make_tree(source_code);
+            let use_declaration = find_child_node(tree.root_node(), "use_declaration");
+
+            let symbols = extract_symbol_reexports(&use_declaration, source_code).unwrap();
+
+            assert_eq!(symbols.len(), 1);
+            assert_matches!(
+                &symbols[0],
+                RustSymbol::Reexport { source_path, import_type: ImportType::Aliased(alias) }
+                if source_path == "type::Foo" && alias == "Bar"
+            );
+        }
+
+        #[test]
+        fn raw_module_wildcard() {
+            let source_code = r#"pub use r#type::{Foo, Bar};"#;
+            let tree = make_tree(source_code);
+            let use_declaration = find_child_node(tree.root_node(), "use_declaration");
+
+            let symbols = extract_symbol_reexports(&use_declaration, source_code).unwrap();
+
+            let reexports = get_reexports(&symbols);
+            assert_contains!(&reexports, &"type::Foo".to_string());
+            assert_contains!(&reexports, &"type::Bar".to_string());
+        }
+
+        #[test]
+        fn module_raw_symbols_wildcard() {
+            let source_code = r#"pub use submodule::{r#fn, r#type};"#;
+            let tree = make_tree(source_code);
+            let use_declaration = find_child_node(tree.root_node(), "use_declaration");
+
+            let symbols = extract_symbol_reexports(&use_declaration, source_code).unwrap();
+
+            let reexports = get_reexports(&symbols);
+            assert_contains!(&reexports, &"submodule::fn".to_string());
+            assert_contains!(&reexports, &"submodule::type".to_string());
+        }
     }
 }
