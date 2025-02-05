@@ -40,7 +40,8 @@ fn extract_symbols_from_module(
 
     for child in module_node.children(&mut cursor) {
         match child.kind() {
-            "function_item" | "struct_item" | "enum_item" | "trait_item" | "type_item" => {
+            "function_item" | "struct_item" | "enum_item" | "trait_item" | "type_item"
+            | "const_item" => {
                 if !is_public(&child) {
                     continue;
                 }
@@ -133,6 +134,23 @@ pub use other::{One, Two};
 
         assert!(rust_file.get_symbol("One").is_some());
         assert!(rust_file.get_symbol("Two").is_some());
+    }
+
+    #[test]
+    fn const_declaration() {
+        let source = r#"
+            pub const THINGY: usize = 16;
+        "#;
+        let mut parser = setup_parser();
+
+        let result = parse_rust_file(source, &mut parser).unwrap();
+
+        assert_eq!(result.symbols.len(), 1);
+        let symbol = result.get_symbol("THINGY").unwrap();
+        let RustSymbol::Symbol { symbol } = symbol else {
+            panic!("Expected a symbol")
+        };
+        assert_eq!(symbol.source_code, "pub const THINGY: usize;");
     }
 
     #[test]

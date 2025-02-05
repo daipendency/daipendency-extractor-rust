@@ -30,6 +30,19 @@ pub fn get_symbol_source_code(node: Node, source_code: &str) -> Result<String, E
                 &source_code[node.start_byte()..block_node.start_byte()].trim_end()
             )
         }
+        "const_item" => {
+            let mut cursor = node.walk();
+            let equals_pos = node
+                .children(&mut cursor)
+                .find(|n| n.kind() == "=")
+                .ok_or_else(|| {
+                    ExtractionError::Malformed("Failed to find equals sign in const".to_string())
+                })?;
+            format!(
+                "{};",
+                &source_code[node.start_byte()..equals_pos.start_byte()].trim_end()
+            )
+        }
         "trait_item" => {
             let declaration_list = get_declaration_list(node).ok_or_else(|| {
                 ExtractionError::Malformed("Failed to find trait declaration list".to_string())
@@ -83,6 +96,19 @@ mod tests {
     }
 
     #[test]
+    fn const_function() {
+        let source_code = r#"pub const fn test_function(x: i32) -> i32 {
+            x + 42
+        }"#;
+        let tree = make_tree(source_code);
+        let function_node = find_child_node(tree.root_node(), "function_item");
+
+        let result = get_symbol_source_code(function_node, source_code).unwrap();
+
+        assert_eq!(result, "pub const fn test_function(x: i32) -> i32;");
+    }
+
+    #[test]
     fn symbol_with_attributes() {
         let source_code = r#"#[cfg(test)]
 pub fn test_function(x: i32) -> i32 { 42 }"#;
@@ -124,5 +150,16 @@ pub fn test_function(x: i32) -> i32 { 42 }"#;
         let result = get_symbol_source_code(struct_node, source_code).unwrap();
 
         assert_eq!(result, source_code);
+    }
+
+    #[test]
+    fn const_declaration() {
+        let source_code = "const THINGY: usize = 16;";
+        let tree = make_tree(source_code);
+        let const_node = find_child_node(tree.root_node(), "const_item");
+
+        let result = get_symbol_source_code(const_node, source_code).unwrap();
+
+        assert_eq!(result, "const THINGY: usize;");
     }
 }
