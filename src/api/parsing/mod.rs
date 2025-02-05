@@ -40,7 +40,7 @@ fn extract_symbols_from_module(
 
     for child in module_node.children(&mut cursor) {
         match child.kind() {
-            "function_item" | "struct_item" | "enum_item" | "trait_item" => {
+            "function_item" | "struct_item" | "enum_item" | "trait_item" | "type_item" => {
                 if !is_public(&child) {
                     continue;
                 }
@@ -151,6 +151,21 @@ pub fn test_function() -> i32 {
             panic!("Expected a symbol")
         };
         assert_eq!(symbol.source_code, "pub fn test_function() -> i32;");
+    }
+
+    #[test]
+    fn type_alias_declaration() {
+        let source_code = "pub type MaybeString = Option<String>;";
+        let mut parser = setup_parser();
+
+        let rust_file = parse_rust_file(source_code, &mut parser).unwrap();
+
+        assert_eq!(rust_file.symbols.len(), 1);
+        let symbol = rust_file.get_symbol("MaybeString").unwrap();
+        let RustSymbol::Symbol { symbol } = symbol else {
+            panic!("Expected a symbol")
+        };
+        assert_eq!(symbol.source_code, source_code);
     }
 
     #[test]
