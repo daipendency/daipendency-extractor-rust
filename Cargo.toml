@@ -1,6 +1,6 @@
 [package]
 name = "daipendency-extractor-rust"
-version = "0.4.3"
+version = "0.5.0"
 edition = "2021"
 description = "Daipendency extractor for Rust library crates"
 repository = "https://github.com/daipendency/daipendency-extractor-rust"
