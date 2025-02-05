@@ -162,4 +162,71 @@ pub fn test_function(x: i32) -> i32 { 42 }"#;
 
         assert_eq!(result, "const THINGY: usize;");
     }
+
+    mod doc_comments {
+        use super::*;
+
+        #[test]
+        fn symbol_without_doc_comment() {
+            let source_code = "pub fn test_function() {}";
+            let tree = make_tree(source_code);
+            let function_node = find_child_node(tree.root_node(), "function_item");
+
+            let result = get_symbol_source_code(function_node, source_code).unwrap();
+
+            assert_eq!(result, "pub fn test_function();");
+        }
+
+        #[test]
+        fn symbol_with_doc_comment() {
+            let source_code = r#"/// Test function
+            pub fn test_function() {}"#;
+            let tree = make_tree(source_code);
+            let function_node = find_child_node(tree.root_node(), "function_item");
+
+            let result = get_symbol_source_code(function_node, source_code).unwrap();
+
+            assert_eq!(result, "/// Test function\npub fn test_function();");
+        }
+    }
+
+    mod attributes {
+        use super::*;
+
+        #[test]
+        fn symbol_without_attributes() {
+            let source_code = "pub fn test_function() {}";
+            let tree = make_tree(source_code);
+            let function_node = find_child_node(tree.root_node(), "function_item");
+
+            let result = get_symbol_source_code(function_node, source_code).unwrap();
+
+            assert_eq!(result, "pub fn test_function();");
+        }
+
+        #[test]
+        fn symbol_with_one_attribute() {
+            let source_code = r#"#[inline]
+            pub fn test_function() {}"#;
+            let tree = make_tree(source_code);
+            let function_node = find_child_node(tree.root_node(), "function_item");
+
+            let result = get_symbol_source_code(function_node, source_code).unwrap();
+
+            assert_eq!(result, "#[inline]\npub fn test_function();");
+        }
+
+        #[test]
+        fn symbol_with_multiple_attributes() {
+            let source_code = r#"#[inline]
+            #[deprecated]
+            pub fn test_function() {}"#;
+            let tree = make_tree(source_code);
+            let function_node = find_child_node(tree.root_node(), "function_item");
+
+            let result = get_symbol_source_code(function_node, source_code).unwrap();
+
+            assert_eq!(result, "#[inline]\n#[deprecated]\npub fn test_function();");
+        }
+    }
 }
