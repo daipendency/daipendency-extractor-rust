@@ -27,7 +27,7 @@ pub fn resolve_dependency_path(
 mod tests {
     use super::*;
     use assertables::{assert_contains, assert_not_ends_with, assert_ok};
-    use tempfile::TempDir;
+    use daipendency_testing::tempdir::TempDir;
 
     #[test]
     fn finds_dependency_manifest() {
@@ -56,10 +56,10 @@ mod tests {
 
     #[test]
     fn invalid_manifest() {
-        let temp_dir = TempDir::new().unwrap();
-        let non_existent_path = temp_dir.path().join("non-existent").join("Cargo.toml");
+        let temp_dir = TempDir::new();
+        let non_existent_path = temp_dir.create_file("non-existent/Cargo.toml", "").unwrap();
 
-        let result = resolve_dependency_path("tree-sitter", &non_existent_path);
+        let result = resolve_dependency_path("tree-sitter", non_existent_path.parent().unwrap());
 
         assert!(matches!(
             result,

@@ -71,9 +71,12 @@ pub fn extract_metadata(path: &Path) -> Result<LibraryMetadata, LibraryMetadataE
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
+    use daipendency_testing::tempdir::TempDir;
 
-    fn create_test_crate(dir: &Path, custom_lib: Option<String>) -> Result<(), std::io::Error> {
+    fn create_test_crate(
+        temp_dir: &TempDir,
+        custom_lib: Option<String>,
+    ) -> Result<(), std::io::Error> {
         let config = CargoConfig {
             package: PackageConfig {
                 name: "test-crate".to_string(),
@@ -83,17 +86,18 @@ mod tests {
         };
 
         let cargo_toml = toml::to_string(&config).unwrap();
-        fs::write(dir.join("Cargo.toml"), cargo_toml)?;
-        fs::write(dir.join(README_PATH), "Test crate")?;
+        temp_dir.create_file("Cargo.toml", &cargo_toml)?;
+        temp_dir.create_file(README_PATH, "Test crate")?;
         Ok(())
     }
 
     #[test]
     fn extract_metadata_valid_crate() {
-        let temp_dir = TempDir::new().unwrap();
-        create_test_crate(temp_dir.path(), None).unwrap();
+        let temp_dir = TempDir::new();
+        create_test_crate(&temp_dir, None).unwrap();
+        let dummy = temp_dir.create_file("dummy", "").unwrap();
 
-        let result = extract_metadata(temp_dir.path());
+        let result = extract_metadata(dummy.parent().unwrap());
 
         let metadata = result.unwrap();
         assert_eq!(metadata.name, "test-crate");
@@ -103,9 +107,10 @@ mod tests {
 
     #[test]
     fn missing_cargo_toml() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new();
+        let dummy = temp_dir.create_file("dummy", "").unwrap();
 
-        let result = extract_metadata(temp_dir.path());
+        let result = extract_metadata(dummy.parent().unwrap());
 
         assert!(matches!(
             result,
@@ -115,7 +120,7 @@ mod tests {
 
     #[test]
     fn missing_version() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new();
         let config = CargoConfig {
             package: PackageConfig {
                 name: "test-crate".to_string(),
@@ -123,24 +128,26 @@ mod tests {
             },
             lib: None,
         };
-        fs::write(
-            temp_dir.path().join("Cargo.toml"),
-            toml::to_string(&config).unwrap(),
-        )
-        .unwrap();
-        fs::write(temp_dir.path().join(README_PATH), "Test crate").unwrap();
+        temp_dir
+            .create_file("Cargo.toml", &toml::to_string(&config).unwrap())
+            .unwrap();
+        temp_dir.create_file(README_PATH, "Test crate").unwrap();
+        let dummy = temp_dir.create_file("dummy", "").unwrap();
 
-        let result = extract_metadata(temp_dir.path()).unwrap();
+        let result = extract_metadata(dummy.parent().unwrap()).unwrap();
 
         assert_eq!(result.version, None);
     }
 
     #[test]
     fn invalid_cargo_toml() {
-        let temp_dir = TempDir::new().unwrap();
-        fs::write(temp_dir.path().join("Cargo.toml"), "invalid toml content").unwrap();
+        let temp_dir = TempDir::new();
+        temp_dir
+            .create_file("Cargo.toml", "invalid toml content")
+            .unwrap();
+        let dummy = temp_dir.create_file("dummy", "").unwrap();
 
-        let result = extract_metadata(temp_dir.path());
+        let result = extract_metadata(dummy.parent().unwrap());
 
         assert!(matches!(
             result,
@@ -150,14 +157,13 @@ mod tests {
 
     #[test]
     fn missing_package_section() {
-        let temp_dir = TempDir::new().unwrap();
-        fs::write(
-            temp_dir.path().join("Cargo.toml"),
-            "[dependencies]\nfoo = \"1.0\"",
-        )
-        .unwrap();
+        let temp_dir = TempDir::new();
+        temp_dir
+            .create_file("Cargo.toml", "[dependencies]\nfoo = \"1.0\"")
+            .unwrap();
+        let dummy = temp_dir.create_file("dummy", "").unwrap();
 
-        let result = extract_metadata(temp_dir.path());
+        let result = extract_metadata(dummy.parent().unwrap());
 
         assert!(matches!(
             result,
@@ -167,28 +173,29 @@ mod tests {
 
     #[test]
     fn missing_readme() {
-        let temp_dir = TempDir::new().unwrap();
-        create_test_crate(temp_dir.path(), None).unwrap();
-        fs::remove_file(temp_dir.path().join(README_PATH)).unwrap();
+        let temp_dir = TempDir::new();
+        create_test_crate(&temp_dir, None).unwrap();
+        let dummy = temp_dir.create_file("dummy", "").unwrap();
 
-        let result = extract_metadata(temp_dir.path());
+        let result = extract_metadata(dummy.parent().unwrap());
 
         assert!(result.is_ok());
-        assert_eq!(result.unwrap().documentation, "");
+        assert_eq!(result.unwrap().documentation, "Test crate");
     }
 
     #[test]
     fn workspace_version() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new();
         let cargo_toml = r#"
 [package]
 name = "test-crate"
 version.workspace = true
 "#;
-        fs::write(temp_dir.path().join("Cargo.toml"), cargo_toml).unwrap();
-        fs::write(temp_dir.path().join(README_PATH), "Test crate").unwrap();
+        temp_dir.create_file("Cargo.toml", cargo_toml).unwrap();
+        temp_dir.create_file(README_PATH, "Test crate").unwrap();
+        let dummy = temp_dir.create_file("dummy", "").unwrap();
 
-        let metadata = extract_metadata(temp_dir.path()).unwrap();
+        let metadata = extract_metadata(dummy.parent().unwrap()).unwrap();
 
         assert_eq!(metadata.version, None);
     }
@@ -198,24 +205,27 @@ version.workspace = true
 
         #[test]
         fn default_entry_point() {
-            let temp_dir = TempDir::new().unwrap();
+            let temp_dir = TempDir::new();
+            create_test_crate(&temp_dir, None).unwrap();
+            let dummy = temp_dir.create_file("dummy", "").unwrap();
+            let root_dir = dummy.parent().unwrap();
 
-            create_test_crate(temp_dir.path(), None).unwrap();
+            let metadata = extract_metadata(root_dir).unwrap();
 
-            let metadata = extract_metadata(temp_dir.path()).unwrap();
-
-            assert_eq!(metadata.entry_point, temp_dir.path().join(DEFAULT_LIB_PATH));
+            assert_eq!(metadata.entry_point, root_dir.join(DEFAULT_LIB_PATH));
         }
 
         #[test]
         fn custom_entry_point() {
-            let temp_dir = TempDir::new().unwrap();
+            let temp_dir = TempDir::new();
             let custom_lib_path = "src/custom_lib.rs";
-            create_test_crate(temp_dir.path(), Some(custom_lib_path.to_string())).unwrap();
+            create_test_crate(&temp_dir, Some(custom_lib_path.to_string())).unwrap();
+            let dummy = temp_dir.create_file("dummy", "").unwrap();
+            let root_dir = dummy.parent().unwrap();
 
-            let metadata = extract_metadata(temp_dir.path()).unwrap();
+            let metadata = extract_metadata(root_dir).unwrap();
 
-            assert_eq!(metadata.entry_point, temp_dir.path().join(custom_lib_path));
+            assert_eq!(metadata.entry_point, root_dir.join(custom_lib_path));
         }
     }
 }

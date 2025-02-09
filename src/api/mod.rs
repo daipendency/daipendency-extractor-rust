@@ -30,11 +30,10 @@ pub fn build_public_api(
 
 #[cfg(test)]
 mod tests {
-    use assertables::assert_matches;
-
     use super::*;
     use crate::test_helpers::setup_parser;
-    use crate::test_helpers::{create_file, create_temp_dir};
+    use assertables::assert_matches;
+    use daipendency_testing::tempdir::TempDir;
 
     const STUB_CRATE_NAME: &str = "test_crate";
 
@@ -50,12 +49,11 @@ mod tests {
 
     #[test]
     fn integration() {
-        let temp_dir = create_temp_dir();
-        let lib_rs = temp_dir.path().join("src").join("lib.rs");
-        let module_rs = temp_dir.path().join("src").join("module.rs");
-        create_file(
-            &lib_rs,
-            r#"
+        let temp_dir = TempDir::new();
+        let lib_rs = temp_dir
+            .create_file(
+                "src/lib.rs",
+                r#"
 pub mod module;
 pub use module::Format;
 
@@ -63,16 +61,19 @@ pub fn process(format: Format) -> String {
     "processed".to_string()
 }
 "#,
-        );
-        create_file(
-            &module_rs,
-            r#"
+            )
+            .unwrap();
+        temp_dir
+            .create_file(
+                "src/module.rs",
+                r#"
 pub enum Format {
     Text,
     Binary,
 }
 "#,
-        );
+            )
+            .unwrap();
         let mut parser = setup_parser();
 
         let namespaces = build_public_api(&lib_rs, STUB_CRATE_NAME, &mut parser).unwrap();
@@ -96,23 +97,25 @@ pub enum Format {
 
     #[test]
     fn wildcard_reexport() {
-        let temp_dir = create_temp_dir();
-        let lib_rs = temp_dir.path().join("src").join("lib.rs");
-        let submodule_rs = temp_dir.path().join("src").join("submodule.rs");
-        create_file(
-            &lib_rs,
-            r#"
+        let temp_dir = TempDir::new();
+        let lib_rs = temp_dir
+            .create_file(
+                "src/lib.rs",
+                r#"
 mod submodule;
 pub use submodule::*;
 "#,
-        );
-        create_file(
-            &submodule_rs,
-            r#"
+            )
+            .unwrap();
+        temp_dir
+            .create_file(
+                "src/submodule.rs",
+                r#"
 pub struct One;
 pub struct Two;
 "#,
-        );
+            )
+            .unwrap();
         let mut parser = setup_parser();
 
         let namespaces = build_public_api(&lib_rs, STUB_CRATE_NAME, &mut parser).unwrap();
@@ -126,15 +129,16 @@ pub struct Two;
 
     #[test]
     fn new_style_module_directory() {
-        let temp_dir = create_temp_dir();
-        let src_dir = temp_dir.path().join("src");
-        let lib_rs = src_dir.join("lib.rs");
-        let module_rs = src_dir.join("module.rs");
-        let module_dir = src_dir.join("module");
-        let submodule_rs = module_dir.join("submodule.rs");
-        create_file(&lib_rs, r#"pub mod module;"#);
-        create_file(&module_rs, r#"pub mod submodule;"#);
-        create_file(&submodule_rs, r#"pub struct Foo;"#);
+        let temp_dir = TempDir::new();
+        let lib_rs = temp_dir
+            .create_file("src/lib.rs", r#"pub mod module;"#)
+            .unwrap();
+        temp_dir
+            .create_file("src/module.rs", r#"pub mod submodule;"#)
+            .unwrap();
+        temp_dir
+            .create_file("src/module/submodule.rs", r#"pub struct Foo;"#)
+            .unwrap();
         let mut parser = setup_parser();
 
         let namespaces = build_public_api(&lib_rs, STUB_CRATE_NAME, &mut parser).unwrap();
@@ -151,14 +155,15 @@ pub struct Two;
 
     #[test]
     fn external_dependency_reexport() {
-        let temp_dir = create_temp_dir();
-        let lib_rs = temp_dir.path().join("src").join("lib.rs");
-        create_file(
-            &lib_rs,
-            r#"
+        let temp_dir = TempDir::new();
+        let lib_rs = temp_dir
+            .create_file(
+                "src/lib.rs",
+                r#"
 pub use serde_json;
 "#,
-        );
+            )
+            .unwrap();
         let mut parser = setup_parser();
 
         let namespaces = build_public_api(&lib_rs, STUB_CRATE_NAME, &mut parser).unwrap();

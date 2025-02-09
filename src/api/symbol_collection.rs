@@ -133,8 +133,8 @@ fn prefix_namespace(name: &str, namespace: &str) -> String {
 mod tests {
     use super::*;
     use crate::test_helpers::setup_parser;
-    use crate::test_helpers::{create_file, create_temp_dir};
     use assertables::assert_matches;
+    use daipendency_testing::tempdir::TempDir;
 
     #[test]
     fn non_existing_file() {
@@ -143,69 +143,72 @@ mod tests {
 
         let result = collect_module_directories(&path, &mut parser);
 
-        assert!(matches!(result, Err(ExtractionError::Io(_))));
+        assert!(matches!(result, Err(ExtractionError::Io(_))))
     }
 
     #[test]
     fn cyclic_modules() {
-        let temp_dir = create_temp_dir();
-        let module_a_rs = temp_dir.path().join("src").join("module_a.rs");
-        let module_b_rs = temp_dir.path().join("src").join("module_b.rs");
-        create_file(
-            &module_a_rs,
-            r#"
+        let temp_dir = TempDir::new();
+        let module_a_rs = temp_dir
+            .create_file(
+                "src/module_a.rs",
+                r#"
 pub mod module_b;
 pub fn module_a_function() {}
 "#,
-        );
-        create_file(
-            &module_b_rs,
-            r#"
+            )
+            .unwrap();
+        temp_dir
+            .create_file(
+                "src/module_b.rs",
+                r#"
 pub mod module_a;  // This creates a cycle
 pub fn module_b_function() {}
 "#,
-        );
+            )
+            .unwrap();
         let mut parser = setup_parser();
 
         // This should complete without infinite recursion
         let directories = collect_module_directories(&module_a_rs, &mut parser).unwrap();
 
-        assert!(!directories.is_empty());
+        assert!(!directories.is_empty())
     }
 
     #[test]
     fn root_module_directory_visibility() {
-        let temp_dir = create_temp_dir();
-        let lib_rs = temp_dir.path().join("src").join("lib.rs");
-        create_file(
-            &lib_rs,
-            r#"
+        let temp_dir = TempDir::new();
+        let lib_rs = temp_dir
+            .create_file(
+                "src/lib.rs",
+                r#"
 pub fn public_function() {}
 "#,
-        );
+            )
+            .unwrap();
         let mut parser = setup_parser();
 
         let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
 
         assert_eq!(directories.len(), 1);
-        assert!(directories[0].is_public);
+        assert!(directories[0].is_public)
     }
 
     mod exports {
-        use assertables::assert_matches;
-
         use super::*;
+        use assertables::assert_matches;
 
         #[test]
         fn public_symbol() {
-            let temp_dir = create_temp_dir();
-            let lib_rs = temp_dir.path().join("src").join("lib.rs");
-            create_file(
-                &lib_rs,
-                r#"
+            let temp_dir = TempDir::new();
+            let lib_rs = temp_dir
+                .create_file(
+                    "src/lib.rs",
+                    r#"
 pub fn public_function() {}
 "#,
-            );
+                )
+                .unwrap();
             let mut parser = setup_parser();
 
             let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
@@ -218,38 +221,40 @@ pub fn public_function() {}
             assert!(matches!(
                 &definitions[0],
                 RustSymbol::Symbol { symbol } if symbol.name == "public_function"
-            ));
+            ))
         }
 
         #[test]
         fn private_symbol() {
-            let temp_dir = create_temp_dir();
-            let lib_rs = temp_dir.path().join("src").join("lib.rs");
-            create_file(
-                &lib_rs,
-                r#"
+            let temp_dir = TempDir::new();
+            let lib_rs = temp_dir
+                .create_file(
+                    "src/lib.rs",
+                    r#"
 fn private_function() {}
 "#,
-            );
+                )
+                .unwrap();
             let mut parser = setup_parser();
 
             let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
 
             assert_eq!(directories.len(), 1);
             assert_eq!(directories[0].name, "");
-            assert_eq!(directories[0].entry_point.symbols.len(), 0);
+            assert_eq!(directories[0].entry_point.symbols.len(), 0)
         }
 
         #[test]
         fn public_module() {
-            let temp_dir = create_temp_dir();
-            let lib_rs = temp_dir.path().join("src").join("lib.rs");
-            create_file(
-                &lib_rs,
-                r#"
+            let temp_dir = TempDir::new();
+            let lib_rs = temp_dir
+                .create_file(
+                    "src/lib.rs",
+                    r#"
 pub mod public_module {}
 "#,
-            );
+                )
+                .unwrap();
             let mut parser = setup_parser();
 
             let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
@@ -262,19 +267,20 @@ pub mod public_module {}
                 &root.entry_point.symbols[0],
                 RustSymbol::ModuleBlock { name, is_public: true, doc_comment: None, .. }
                 if name == "public_module"
-            );
+            )
         }
 
         #[test]
         fn private_module() {
-            let temp_dir = create_temp_dir();
-            let lib_rs = temp_dir.path().join("src").join("lib.rs");
-            create_file(
-                &lib_rs,
-                r#"
+            let temp_dir = TempDir::new();
+            let lib_rs = temp_dir
+                .create_file(
+                    "src/lib.rs",
+                    r#"
 mod private_module {}
 "#,
-            );
+                )
+                .unwrap();
             let mut parser = setup_parser();
 
             let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
@@ -289,35 +295,34 @@ mod private_module {}
                     is_public: false,
                     ..
                 }
-            );
+            )
         }
     }
 
     mod reexports {
-        use crate::api::parsing::ImportType;
-
-        use crate::api::test_helpers::get_module_directory;
-
         use super::*;
+        use crate::api::parsing::ImportType;
+        use crate::api::test_helpers::get_module_directory;
 
         #[test]
         fn module_reexport() {
-            let temp_dir = create_temp_dir();
-            let lib_rs = temp_dir.path().join("src").join("lib.rs");
-            let module_rs = temp_dir.path().join("src").join("module.rs");
-
-            create_file(
-                &lib_rs,
-                r#"
+            let temp_dir = TempDir::new();
+            let lib_rs = temp_dir
+                .create_file(
+                    "src/lib.rs",
+                    r#"
 pub mod module;
 "#,
-            );
-            create_file(
-                &module_rs,
-                r#"
+                )
+                .unwrap();
+            temp_dir
+                .create_file(
+                    "src/module.rs",
+                    r#"
 pub struct InnerStruct;
 "#,
-            );
+                )
+                .unwrap();
 
             let mut parser = setup_parser();
             let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
@@ -336,30 +341,32 @@ pub struct InnerStruct;
             assert_matches!(
                 &module_file.symbols[0],
                 RustSymbol::Symbol { symbol } if symbol.name == "InnerStruct"
-            );
+            )
         }
 
         #[test]
         fn direct_symbol_reexport() {
-            let temp_dir = create_temp_dir();
-            let lib_rs = temp_dir.path().join("src").join("lib.rs");
-            let formatter_rs = temp_dir.path().join("src").join("formatter.rs");
-            create_file(
-                &lib_rs,
-                r#"
+            let temp_dir = TempDir::new();
+            let lib_rs = temp_dir
+                .create_file(
+                    "src/lib.rs",
+                    r#"
 mod formatter;
 pub use formatter::Format;
 "#,
-            );
-            create_file(
-                &formatter_rs,
-                r#"
+                )
+                .unwrap();
+            temp_dir
+                .create_file(
+                    "src/formatter.rs",
+                    r#"
 pub enum Format {
     Plain,
     Rich,
 }
 "#,
-            );
+                )
+                .unwrap();
             let mut parser = setup_parser();
 
             let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
@@ -384,36 +391,38 @@ pub enum Format {
             assert_matches!(
                 &formatter_file.symbols[0],
                 RustSymbol::Symbol { symbol } if symbol.name == "Format"
-            );
+            )
         }
 
         #[test]
         fn indirect_symbol_reexport() {
-            let temp_dir = create_temp_dir();
-            let lib_rs = temp_dir.path().join("src").join("lib.rs");
-            let formatting_dir = temp_dir.path().join("src").join("formatting");
-            let formatting_mod_rs = formatting_dir.join("mod.rs");
-            let format_rs = formatting_dir.join("format.rs");
-            create_file(
-                &lib_rs,
-                r#"
+            let temp_dir = TempDir::new();
+            let lib_rs = temp_dir
+                .create_file(
+                    "src/lib.rs",
+                    r#"
     mod formatting;
     pub use formatting::Format;
     "#,
-            );
-            create_file(
-                &formatting_mod_rs,
-                r#"
+                )
+                .unwrap();
+            temp_dir
+                .create_file(
+                    "src/formatting/mod.rs",
+                    r#"
     mod format;
     pub use format::Format;
     "#,
-            );
-            create_file(
-                &format_rs,
-                r#"
+                )
+                .unwrap();
+            temp_dir
+                .create_file(
+                    "src/formatting/format.rs",
+                    r#"
     pub enum Format { Markdown, Html }
     "#,
-            );
+                )
+                .unwrap();
             let mut parser = setup_parser();
 
             let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
@@ -456,11 +465,11 @@ pub enum Format {
 
         #[test]
         fn nested_modules_symbol_reexport() {
-            let temp_dir = create_temp_dir();
-            let lib_rs = temp_dir.path().join("src").join("lib.rs");
-            create_file(
-                &lib_rs,
-                r#"
+            let temp_dir = TempDir::new();
+            let lib_rs = temp_dir
+                .create_file(
+                    "src/lib.rs",
+                    r#"
 pub mod child {
     pub mod grandchild {
         pub enum Format { Plain, Rich }
@@ -469,7 +478,8 @@ pub mod child {
 
 pub use child::grandchild::Format;
 "#,
-            );
+                )
+                .unwrap();
             let mut parser = setup_parser();
 
             let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
@@ -489,27 +499,29 @@ pub use child::grandchild::Format;
                 &root.entry_point.symbols[1],
                 RustSymbol::Reexport { source_path, import_type: ImportType::Simple }
                 if source_path == "child::grandchild::Format"
-            );
+            )
         }
 
         #[test]
         fn wildcard_reexport() {
-            let temp_dir = create_temp_dir();
-            let lib_rs = temp_dir.path().join("src").join("lib.rs");
-            let module_rs = temp_dir.path().join("src").join("module.rs");
-            create_file(
-                &lib_rs,
-                r#"
+            let temp_dir = TempDir::new();
+            let lib_rs = temp_dir
+                .create_file(
+                    "src/lib.rs",
+                    r#"
     mod module;
     pub use module::*;
     "#,
-            );
-            create_file(
-                &module_rs,
-                r#"
+                )
+                .unwrap();
+            temp_dir
+                .create_file(
+                    "src/module.rs",
+                    r#"
     pub struct InnerStruct;
     "#,
-            );
+                )
+                .unwrap();
             let mut parser = setup_parser();
 
             let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
@@ -533,27 +545,29 @@ pub use child::grandchild::Format;
             assert_matches!(
                 &module_file.symbols[0],
                 RustSymbol::Symbol { symbol } if symbol.name == "InnerStruct"
-            );
+            )
         }
 
         #[test]
         fn aliased_reexport() {
-            let temp_dir = create_temp_dir();
-            let lib_rs = temp_dir.path().join("src").join("lib.rs");
-            let submodule_rs = temp_dir.path().join("src").join("submodule.rs");
-            create_file(
-                &lib_rs,
-                r#"
+            let temp_dir = TempDir::new();
+            let lib_rs = temp_dir
+                .create_file(
+                    "src/lib.rs",
+                    r#"
     mod submodule;
     pub use submodule::Foo as Bar;
     "#,
-            );
-            create_file(
-                &submodule_rs,
-                r#"
+                )
+                .unwrap();
+            temp_dir
+                .create_file(
+                    "src/submodule.rs",
+                    r#"
     pub struct Foo;
     "#,
-            );
+                )
+                .unwrap();
             let mut parser = setup_parser();
 
             let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
@@ -577,28 +591,29 @@ pub use child::grandchild::Format;
             assert_matches!(
                 &submodule_file.symbols[0],
                 RustSymbol::Symbol { symbol } if symbol.name == "Foo"
-            );
+            )
         }
 
         #[test]
         fn file_with_mod_in_name() {
-            let temp_dir = create_temp_dir();
-            let lib_rs = temp_dir.path().join("src").join("lib.rs");
-            let my_mod_rs = temp_dir.path().join("src").join("my_mod.rs");
-
-            create_file(
-                &lib_rs,
-                r#"
+            let temp_dir = TempDir::new();
+            let lib_rs = temp_dir
+                .create_file(
+                    "src/lib.rs",
+                    r#"
     mod my_mod;
     pub use my_mod::MyStruct;
     "#,
-            );
-            create_file(
-                &my_mod_rs,
-                r#"
+                )
+                .unwrap();
+            temp_dir
+                .create_file(
+                    "src/my_mod.rs",
+                    r#"
     pub struct MyStruct;
     "#,
-            );
+                )
+                .unwrap();
 
             let mut parser = setup_parser();
             let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
@@ -621,7 +636,7 @@ pub use child::grandchild::Format;
             assert_matches!(
                 &my_mod_file.symbols[0],
                 RustSymbol::Symbol { symbol } if symbol.name == "MyStruct"
-            );
+            )
         }
     }
 
@@ -630,16 +645,17 @@ pub use child::grandchild::Format;
 
         #[test]
         fn file_with_doc_comment() {
-            let temp_dir = create_temp_dir();
-            let lib_rs = temp_dir.path().join("src").join("lib.rs");
-            create_file(
-                &lib_rs,
-                r#"//! This is a file-level doc comment.
+            let temp_dir = TempDir::new();
+            let lib_rs = temp_dir
+                .create_file(
+                    "src/lib.rs",
+                    r#"//! This is a file-level doc comment.
 //! It can span multiple lines.
 
 pub struct Test {}
 "#,
-            );
+                )
+                .unwrap();
 
             let mut parser = setup_parser();
             let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
@@ -652,21 +668,22 @@ pub struct Test {}
                     "//! This is a file-level doc comment.\n//! It can span multiple lines.\n"
                         .to_string()
                 )
-            );
+            )
         }
 
         #[test]
         fn module_with_inner_doc_comment() {
-            let temp_dir = create_temp_dir();
-            let lib_rs = temp_dir.path().join("src").join("lib.rs");
-            create_file(
-                &lib_rs,
-                r#"
+            let temp_dir = TempDir::new();
+            let lib_rs = temp_dir
+                .create_file(
+                    "src/lib.rs",
+                    r#"
 pub mod inner {
     //! This is the inner doc comment
 }
 "#,
-            );
+                )
+                .unwrap();
 
             let mut parser = setup_parser();
             let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
@@ -679,7 +696,7 @@ pub mod inner {
                 &root.entry_point.symbols[0],
                 RustSymbol::ModuleBlock { name, is_public: true, doc_comment, .. }
                 if name == "inner" && *doc_comment == Some("//! This is the inner doc comment\n".to_string())
-            );
+            )
         }
     }
 
@@ -689,15 +706,16 @@ pub mod inner {
 
         #[test]
         fn old_style() {
-            let temp_dir = create_temp_dir();
-            let src_dir = temp_dir.path().join("src");
-            let lib_rs = src_dir.join("lib.rs");
-            let module_dir = src_dir.join("module");
-            let mod_rs = module_dir.join("mod.rs");
-            let submodule_rs = module_dir.join("submodule.rs");
-            create_file(&lib_rs, r#"mod module;"#);
-            create_file(&mod_rs, r#"mod submodule;"#);
-            create_file(&submodule_rs, r#"pub struct SubStruct;"#);
+            let temp_dir = TempDir::new();
+            let lib_rs = temp_dir
+                .create_file("src/lib.rs", r#"mod module;"#)
+                .unwrap();
+            temp_dir
+                .create_file("src/module/mod.rs", r#"mod submodule;"#)
+                .unwrap();
+            temp_dir
+                .create_file("src/module/submodule.rs", r#"pub struct SubStruct;"#)
+                .unwrap();
             let mut parser = setup_parser();
 
             let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
@@ -711,20 +729,21 @@ pub mod inner {
             assert_matches!(
                 &submodule.symbols[0],
                 RustSymbol::Symbol { symbol } if symbol.name == "SubStruct"
-            );
+            )
         }
 
         #[test]
         fn new_style() {
-            let temp_dir = create_temp_dir();
-            let src_dir = temp_dir.path().join("src");
-            let lib_rs = src_dir.join("lib.rs");
-            let module_rs = src_dir.join("module.rs");
-            let module_dir = src_dir.join("module");
-            let submodule_rs = module_dir.join("submodule.rs");
-            create_file(&lib_rs, r#"mod module;"#);
-            create_file(&module_rs, r#"mod submodule;"#);
-            create_file(&submodule_rs, r#"pub struct SubStruct;"#);
+            let temp_dir = TempDir::new();
+            let lib_rs = temp_dir
+                .create_file("src/lib.rs", r#"mod module;"#)
+                .unwrap();
+            temp_dir
+                .create_file("src/module.rs", r#"mod submodule;"#)
+                .unwrap();
+            temp_dir
+                .create_file("src/module/submodule.rs", r#"pub struct SubStruct;"#)
+                .unwrap();
             let mut parser = setup_parser();
 
             let directories = collect_module_directories(&lib_rs, &mut parser).unwrap();
@@ -738,7 +757,7 @@ pub mod inner {
             assert_matches!(
                 &submodule.symbols[0],
                 RustSymbol::Symbol { symbol } if symbol.name == "SubStruct"
-            );
+            )
         }
     }
 }
