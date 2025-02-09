@@ -96,7 +96,6 @@ dependencies = [
  "toml",
  "tree-sitter",
  "tree-sitter-rust",
- "walkdir",
 ]
 
 [[package]]
